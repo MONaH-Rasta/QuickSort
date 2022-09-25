@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "Frenk92", "1.3.4")]
+    [Info("Quick Sort", "Frenk92", "1.3.5")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     class QuickSort : CovalencePlugin
     {
