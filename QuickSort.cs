@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "Frenk92", "1.3.3")]
+    [Info("Quick Sort", "Frenk92", "1.3.4")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     class QuickSort : CovalencePlugin
     {
@@ -176,7 +176,7 @@ namespace Oxide.Plugins
 
         private void OnLootEntity(BasePlayer player, BaseEntity entity)
         {
-            if (permission.UserHasPermission(player.UserIDString, permUse) && !(entity is VendingMachine) && !(entity is ShopFront))
+            if (permission.UserHasPermission(player.UserIDString, permUse) && !(entity is VendingMachine) && !(entity is ShopFront) && !(entity is BigWheelBettingTerminal))
             {
                 UserInterface(player);
             }
@@ -321,7 +321,11 @@ namespace Oxide.Plugins
         {
             if (player.HasPermission(permUse))
             {
-                SortItems(player.Object as BasePlayer, args);
+                try
+                {
+                    SortItems(player.Object as BasePlayer, args);
+                }
+                catch { }
             }
         }
 
@@ -376,9 +380,9 @@ namespace Oxide.Plugins
             if (player == null) return;
             var type = GetPlayerData(player.UserIDString)?.Containers;
             ItemContainer container = GetLootedInventory(player)[0];
-            ItemContainer playerMain = player.inventory.containerMain;
-            ItemContainer playerWear = player.inventory.containerWear;
-            ItemContainer playerBelt = player.inventory.containerBelt;
+            ItemContainer playerMain = player.inventory?.containerMain;
+            ItemContainer playerWear = player.inventory?.containerWear;
+            ItemContainer playerBelt = player.inventory?.containerBelt;
 
             if (container != null && playerMain != null)
             {
