@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "Frenk92", "1.3.1")]
+    [Info("Quick Sort", "Frenk92", "1.3.2")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     class QuickSort : CovalencePlugin
     {
@@ -387,26 +387,31 @@ namespace Oxide.Plugins
                 {
                     if (args[0].Equals("existing"))
                     {
-                        itemsSelected = GetExistingItems(playerMain, container);
+                        if (config.Containers.Main && (type == null || type.Main))
+                            itemsSelected.AddRange(GetExistingItems(playerMain, container));
+                        if (playerWear != null && config.Containers.Wear && type != null && type.Wear)
+                            itemsSelected.AddRange(GetExistingItems(playerWear, container));
+                        if (playerBelt != null && config.Containers.Belt && type != null && type.Belt)
+                            itemsSelected.AddRange(GetExistingItems(playerBelt, container));
                     }
                     else
                     {
                         ItemCategory category = StringToItemCategory(args[0]);
-                        if (config.Containers.Main && type.Main)
+                        if (config.Containers.Main && (type == null || type.Main))
                             itemsSelected.AddRange(GetItemsOfType(playerMain, category));
-                        if (config.Containers.Wear && type.Wear)
+                        if (playerWear != null && config.Containers.Wear && type != null && type.Wear)
                             itemsSelected.AddRange(GetItemsOfType(playerWear, category));
-                        if (config.Containers.Belt && type.Belt)
-                        itemsSelected.AddRange(GetItemsOfType(playerBelt, category));
+                        if (playerBelt != null && config.Containers.Belt && type != null && type.Belt)
+                            itemsSelected.AddRange(GetItemsOfType(playerBelt, category));
                     }
                 }
                 else
                 {
-                    if (config.Containers.Main && type.Main)
+                    if (config.Containers.Main && (type == null || type.Main))
                         itemsSelected.AddRange(CloneItemList(playerMain.itemList));
-                    if (config.Containers.Wear && type.Wear)
+                    if (playerWear != null && config.Containers.Wear && type != null && type.Wear)
                         itemsSelected.AddRange(CloneItemList(playerWear.itemList));
-                    if (config.Containers.Belt && type.Belt)
+                    if (playerBelt != null && config.Containers.Belt && type != null && type.Belt)
                         itemsSelected.AddRange(CloneItemList(playerBelt.itemList));
                 }
 
