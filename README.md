@@ -18,7 +18,6 @@
 ## Configuration
 ```json
 {
-{
   "Global settings": {
     "Default enabled": true,
     "Default UI style (center, lite, right, custom)": "right",
@@ -89,6 +88,12 @@
   "Error.Syntax": "List Commands:\n<color=#FFFF00>/{0} on</color> - Enable GUI\n<color=#FFFF00>/{0} off</color> - Disable GUI\n<color=#FFFF00>/{0} auto</color> - Enable/Disable automated looting\n<color=#FFFF00>/{0} <s | style> <center | lite | right | custom></color> - change GUI style\n<color=#FFFF00>/{0} <c | conatiner> <main | wear | belt></color> - add/remove container type from the sort"
 }
 ```
+## Developer Hooks
+### QuickSortExcluded
+```cs
+object QuickSortExcluded(BasePlayer player, BaseEntity entity)
+```
+Called when a player tries to open a container. Returning a non-null value prevents the container being autolooted and Ui will not appear.
 
 ## Credits
 
