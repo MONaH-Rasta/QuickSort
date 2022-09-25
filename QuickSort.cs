@@ -1,4 +1,3 @@
-using Facepunch;
 using Newtonsoft.Json;
 using Oxide.Core;
 using Oxide.Game.Rust.Cui;
@@ -6,18 +5,41 @@ using System.Collections.Generic;
 using System;
 using UnityEngine;
 
+using Pool = Facepunch.Pool;
+
+/*
+7. Use offsets instead of anchors for all the child UI elements (my preference).
+8. Is it necessary to use OnEntityDeath / OnEntityKill / OnPlayerSleep?
+Nowadays I think the loot hooks are sufficiently comprehensive.
+Do need OnPlayerLootEnd and possibly OnLootEntityEnd (for edge cases).
+*/
+
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "MON@H", "1.6.0")]
+    [Info("Quick Sort", "MON@H", "1.8.0")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     public class QuickSort : RustPlugin
     {
         #region Variables
 
+        private const string GUIPanelName = "QuickSortUI";
         private const string PermissionAutoLootAll = "quicksort.autolootall";
         private const string PermissionLootAll = "quicksort.lootall";
         private const string PermissionUse = "quicksort.use";
-        private const string GUIPanelName = "QuickSortUI";
+
+        private readonly Hash<int, string> _cacheUiJson = new Hash<int, string>();
+        private readonly Hash<string, int> _cacheLanguageIDs = new Hash<string, int>();
+        private readonly HashSet<uint> _cacheContainersExcluded = new HashSet<uint>();
+        // Keep track of UI viewers to reduce unnecessary calls to destroy the UI.
+        private readonly HashSet<ulong> _uiViewers = new HashSet<ulong>();
+
+        private BaseOven _furnace;
+        private bool _autoLootAll;
+        private ItemModCookable _cookable;
+        private object[] _noteInv = new object[2];
+        // When players do not have data, use this shared object to avoid unnecessary heap allocations.
+        private PlayerData _defaultPlayerData;
+        private PlayerData _playerData;
 
         #endregion Variables
 
@@ -25,50 +47,23 @@ namespace Oxide.Plugins
 
         private void Init()
         {
-            Unsubscribe(nameof(OnBackpackClosed));
-            Unsubscribe(nameof(OnBackpackOpened));
-            Unsubscribe(nameof(OnEntityDeath));
-            Unsubscribe(nameof(OnEntityKill));
-            Unsubscribe(nameof(OnLootEntity));
-            Unsubscribe(nameof(OnLootPlayer));
-            Unsubscribe(nameof(OnPlayerLootEnd));
-            Unsubscribe(nameof(OnPlayerSleep));
-
-            LoadData();
-
-            permission.RegisterPermission(PermissionAutoLootAll, this);
-            permission.RegisterPermission(PermissionLootAll, this);
-            permission.RegisterPermission(PermissionUse, this);
-
-            if (_configData.GlobalSettings.Commands.Length == 0)
-            {
-                _configData.GlobalSettings.Commands = new[] { "qs" };
-                SaveConfig();
-            }
-
-            foreach (string command in _configData.GlobalSettings.Commands)
-            {
-                cmd.AddChatCommand(command, this, nameof(CmdQuickSort));
-            }
+            UnsubscribeHooks();
+            RegisterPermissions();
+            AddCommands();
         }
 
         private void OnServerInitialized()
         {
-            Subscribe(nameof(OnBackpackClosed));
-            Subscribe(nameof(OnBackpackOpened));
-            Subscribe(nameof(OnEntityDeath));
-            Subscribe(nameof(OnEntityKill));
-            Subscribe(nameof(OnLootEntity));
-            Subscribe(nameof(OnLootPlayer));
-            Subscribe(nameof(OnPlayerLootEnd));
-            Subscribe(nameof(OnPlayerSleep));
+            CreateCache();
+            LoadData();
+            SubscribeHooks();
         }
 
         private void Unload()
         {
-            foreach (BasePlayer player in BasePlayer.activePlayerList)
+            foreach (BasePlayer activePlayer in BasePlayer.activePlayerList)
             {
-                DestroyGUI(player);
+                UiDestroy(activePlayer);
             }
         }
 
@@ -94,9 +89,6 @@ namespace Oxide.Plugins
                 [JsonProperty(PropertyName = "Default UI style (center, lite, right, custom)")]
                 public string DefaultUiStyle = "right";
 
-                [JsonProperty(PropertyName = "Enable Backpacks plugin support")]
-                public bool BackpacksEnabled = true;
-
                 [JsonProperty(PropertyName = "Loot all delay in seconds (0 to disable)")]
                 public int LootAllDelay = 0;
 
@@ -115,20 +107,14 @@ namespace Oxide.Plugins
                 [JsonProperty(PropertyName = "Chat command")]
                 public string[] Commands = new[] { "qs", "quicksort" };
 
-                [JsonProperty(PropertyName = "Excluded containers")]
-                public string[] ContainersExcluded = new[]
+                [JsonProperty(PropertyName = "Excluded containers", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+                public List<string> ContainersExcluded = new List<string>()
                 {
-                    "autoturret_deployed",
-                    "dropbox.deployed",
-                    "flameturret.deployed",
-                    "guntrap.deployed",
-                    "sam_site_turret_deployed",
-                    "sam_static",
-                    "scientist_turret_any",
-                    "scientist_turret_lr300",
-                    "wall.frame.shopfront",
-                    "wall.frame.shopfront.metal",
-                    "wall.frame.shopfront.metal.static",
+                    "assets/prefabs/deployable/single shot trap/guntrap.deployed.prefab",
+                    "assets/prefabs/npc/autoturret/autoturret_deployed.prefab",
+                    "assets/prefabs/npc/flame turret/flameturret.deployed.prefab",
+                    "assets/prefabs/npc/sam_site_turret/sam_site_turret_deployed.prefab",
+                    "assets/prefabs/npc/sam_site_turret/sam_static.prefab",
                 };
             }
 
@@ -201,35 +187,58 @@ namespace Oxide.Plugins
             public PlayerContainers Containers;
         }
 
-        private PlayerData GetPlayerData(ulong playerID)
-        {
-            PlayerData playerData;
-            if (!_storedData.PlayerData.TryGetValue(playerID, out playerData))
-            {
-                return null;
-            }
-
-            return playerData;
-        }
-
         private void LoadData()
         {
-            try
+            _storedData = Interface.Oxide.DataFileSystem.ReadObject<StoredData>(Name);
+
+            List<ulong> toRemove = Pool.GetList<ulong>();
+            foreach (KeyValuePair<ulong, PlayerData> playerData in _storedData.PlayerData)
             {
-                _storedData = Interface.Oxide.DataFileSystem.ReadObject<StoredData>(Name);
+                if (!playerData.Value.AutoLootAll.Equals(_defaultPlayerData.AutoLootAll))
+                {
+                    continue;
+                }
+                if (!playerData.Value.Enabled.Equals(_defaultPlayerData.Enabled))
+                {
+                    continue;
+                }
+                if (!playerData.Value.UiStyle.Equals(_defaultPlayerData.UiStyle))
+                {
+                    continue;
+                }
+                if (!playerData.Value.Containers.Belt.Equals(_defaultPlayerData.Containers.Belt))
+                {
+                    continue;
+                }
+                if (!playerData.Value.Containers.Main.Equals(_defaultPlayerData.Containers.Main))
+                {
+                    continue;
+                }
+                if (!playerData.Value.Containers.Wear.Equals(_defaultPlayerData.Containers.Wear))
+                {
+                    continue;
+                }
+                toRemove.Add(playerData.Key);
             }
-            catch
+
+            if (toRemove.Count > 0)
             {
-                ClearData();
+                for (int i = 0; i < toRemove.Count; i++)
+                {
+                    _storedData.PlayerData.Remove(toRemove[i]);
+                }
+                Puts($"Removed {toRemove.Count} players with default settings from datafile.");
+                SaveData();
             }
+
+            Pool.FreeList(ref toRemove);
         }
 
         private void SaveData() => Interface.Oxide.DataFileSystem.WriteObject(Name, _storedData);
 
-        private void ClearData()
+        private PlayerData GetPlayerData(ulong userID)
         {
-            _storedData = new StoredData();
-            SaveData();
+            return _storedData.PlayerData[userID] ?? _defaultPlayerData;
         }
 
         #endregion DataFile
@@ -249,38 +258,81 @@ namespace Oxide.Plugins
             }
         }
 
+        private static class LangKeys
+        {
+            public static class Error
+            {
+                private const string Base = nameof(Error) + ".";
+                public const string NoPermission = Base + nameof(NoPermission);
+                public const string Syntax = Base + nameof(Syntax);
+            }
+
+            public static class Info
+            {
+                private const string Base = nameof(Info) + ".";
+                public const string QuickSort = Base + nameof(QuickSort);
+                public const string Style = Base + nameof(Style);
+                public const string AutoLootAll = Base + nameof(AutoLootAll);
+                public const string ContainerType = Base + nameof(ContainerType);
+            }
+
+            public static class Format
+            {
+                private const string Base = nameof(Format) + ".";
+                public const string All = Base + nameof(All);
+                public const string Ammo = Base + nameof(Ammo);
+                public const string Attire = Base + nameof(Attire);
+                public const string Components = Base + nameof(Components);
+                public const string Construction = Base + nameof(Construction);
+                public const string Deployables = Base + nameof(Deployables);
+                public const string Deposit = Base + nameof(Deposit);
+                public const string Disabled = Base + nameof(Disabled);
+                public const string Electrical = Base + nameof(Electrical);
+                public const string Enabled = Base + nameof(Enabled);
+                public const string Existing = Base + nameof(Existing);
+                public const string Food = Base + nameof(Food);
+                public const string LootAll = Base + nameof(LootAll);
+                public const string Medical = Base + nameof(Medical);
+                public const string Misc = Base + nameof(Misc);
+                public const string Prefix = Base + nameof(Prefix);
+                public const string Resources = Base + nameof(Resources);
+                public const string Tools = Base + nameof(Tools);
+                public const string Traps = Base + nameof(Traps);
+                public const string Weapons = Base + nameof(Weapons);
+            }
+        }
+
         protected override void LoadDefaultMessages()
         {
             lang.RegisterMessages(new Dictionary<string, string>
             {
-                ["Deposit"] = "Deposit",
-                ["DepositAll"] = "All",
-                ["DepositAmmo"] = "Ammo",
-                ["DepositAttire"] = "Attire",
-                ["DepositConstruction"] = "Construction",
-                ["DepositElectrical"] = "Electrical",
-                ["DepositExisting"] = "Existing",
-                ["DepositFood"] = "Food",
-                ["DepositItems"] = "Deployables",
-                ["DepositMedical"] = "Medical",
-                ["DepositResources"] = "Resources",
-                ["DepositTools"] = "Tools",
-                ["DepositTraps"] = "Traps",
-                ["DepositWeapons"] = "Weapons",
-                ["DepositComponents"] = "Components",
-                ["DepositMisc"] = "Misc",
-                ["LootAll"] = "Loot All",
+                [LangKeys.Error.NoPermission] = "You do not have permission to use this command!",
+                [LangKeys.Format.All] = "All",
+                [LangKeys.Format.Ammo] = "Ammo",
+                [LangKeys.Format.Attire] = "Attire",
+                [LangKeys.Format.Components] = "Components",
+                [LangKeys.Format.Construction] = "Construction",
+                [LangKeys.Format.Deployables] = "Deployables",
+                [LangKeys.Format.Deposit] = "Deposit",
+                [LangKeys.Format.Disabled] = "<color=#B22222>Disabled</color>",
+                [LangKeys.Format.Electrical] = "Electrical",
+                [LangKeys.Format.Enabled] = "<color=#228B22>Enabled</color>",
+                [LangKeys.Format.Existing] = "Existing",
+                [LangKeys.Format.Food] = "Food",
+                [LangKeys.Format.LootAll] = "Loot All",
+                [LangKeys.Format.Medical] = "Medical",
+                [LangKeys.Format.Misc] = "Misc",
+                [LangKeys.Format.Prefix] = "<color=#00FF00>[Quick Sort]</color>: ",
+                [LangKeys.Format.Resources] = "Resources",
+                [LangKeys.Format.Tools] = "Tools",
+                [LangKeys.Format.Traps] = "Traps",
+                [LangKeys.Format.Weapons] = "Weapons",
+                [LangKeys.Info.AutoLootAll] = "Automated looting is now {0}",
+                [LangKeys.Info.ContainerType] = "Quick Sort for container type {0} is now {1}",
+                [LangKeys.Info.QuickSort] = "Quick Sort GUI is now {0}",
+                [LangKeys.Info.Style] = "Quick Sort GUI style is now {0}",
 
-                ["NotAllowed"] = "You do not have permission to use this command",
-                ["Enabled"] = "<color=#228B22>Enabled</color>",
-                ["Disabled"] = "<color=#B22222>Disabled</color>",
-                ["QuickSort"] = "Quick Sort GUI is now {0}",
-                ["Style"] = "Quick Sort GUI style is now {0}",
-                ["AutoLootAll"] = "Automated looting is now {0}",
-                ["ContainerType"] = "Quick Sort for container type {0} is now {1}",
-                ["Prefix"] = "<color=#00FF00>[Quick Sort]</color>: ",
-
-                ["SyntaxError"] = "List Commands:\n" +
+                [LangKeys.Error.Syntax] = "List Commands:\n" +
                 "<color=#FFFF00>/{0} on</color> - Enable GUI\n" +
                 "<color=#FFFF00>/{0} off</color> - Disable GUI\n" +
                 "<color=#FFFF00>/{0} auto</color> - Enable/Disable automated looting\n" +
@@ -289,34 +341,33 @@ namespace Oxide.Plugins
             }, this);
             lang.RegisterMessages(new Dictionary<string, string>
             {
-                ["Deposit"] = "Положить",
-                ["DepositAll"] = "Всё",
-                ["DepositAmmo"] = "Патроны",
-                ["DepositAttire"] = "Одежда",
-                ["DepositConstruction"] = "Конструкции",
-                ["DepositElectrical"] = "Электричество",
-                ["DepositExisting"] = "Существующие",
-                ["DepositFood"] = "Еда",
-                ["DepositItems"] = "Развертываемые",
-                ["DepositMedical"] = "Медикаменты",
-                ["DepositResources"] = "Ресурсы",
-                ["DepositTools"] = "Инструменты",
-                ["DepositTraps"] = "Ловушки",
-                ["DepositWeapons"] = "Оружие",
-                ["DepositComponents"] = "Компоненты",
-                ["DepositMisc"] = "Разное",
-                ["LootAll"] = "Забрать всё",
+                [LangKeys.Error.NoPermission] = "У вас нет разрешения на использование этой команды!",
+                [LangKeys.Format.All] = "Всё",
+                [LangKeys.Format.Ammo] = "Патроны",
+                [LangKeys.Format.Attire] = "Одежда",
+                [LangKeys.Format.Components] = "Компоненты",
+                [LangKeys.Format.Construction] = "Конструкции",
+                [LangKeys.Format.Deployables] = "Развертываемые",
+                [LangKeys.Format.Deposit] = "Положить",
+                [LangKeys.Format.Disabled] = "<color=#B22222>Отключена</color>",
+                [LangKeys.Format.Electrical] = "Электричество",
+                [LangKeys.Format.Enabled] = "<color=#228B22>Включена</color>",
+                [LangKeys.Format.Existing] = "Существующие",
+                [LangKeys.Format.Food] = "Еда",
+                [LangKeys.Format.LootAll] = "Забрать всё",
+                [LangKeys.Format.Medical] = "Медикаменты",
+                [LangKeys.Format.Misc] = "Разное",
+                [LangKeys.Format.Prefix] = "<color=#00FF00>[Быстрая сортировка]</color>: ",
+                [LangKeys.Format.Resources] = "Ресурсы",
+                [LangKeys.Format.Tools] = "Инструменты",
+                [LangKeys.Format.Traps] = "Ловушки",
+                [LangKeys.Format.Weapons] = "Оружие",
+                [LangKeys.Info.AutoLootAll] = "Забирать всё автоматически теперь {0}",
+                [LangKeys.Info.ContainerType] = "Быстрая сортировка для типа контейнера {0} теперь {1}",
+                [LangKeys.Info.QuickSort] = "GUI быстрой сортировки теперь {0}",
+                [LangKeys.Info.Style] = "Стиль GUI быстрой сортировки теперь {0}",
 
-                ["NotAllowed"] = "У вас нет разрешения на использование этой команды",
-                ["Enabled"] = "<color=#228B22>Включена</color>",
-                ["Disabled"] = "<color=#B22222>Отключена</color>",
-                ["QuickSort"] = "GUI быстрой сортировки теперь {0}",
-                ["Style"] = "Стиль GUI быстрой сортировки теперь {0}",
-                ["AutoLootAll"] = "Забирать всё автоматически теперь {0}",
-                ["ContainerType"] = "Быстрая сортировка для типа контейнера {0} теперь {1}",
-                ["Prefix"] = "<color=#00FF00>[Быстрая сортировка]</color>: ",
-
-                ["SyntaxError"] = "Список команд:\n" +
+                [LangKeys.Error.Syntax] = "Список команд:\n" +
                 "<color=#FFFF00>/{0} on</color> - Включить GUI\n" +
                 "<color=#FFFF00>/{0} off</color> - Отключить GUI\n" +
                 "<color=#FFFF00>/{0} auto</color> - Включить/Отключить забирать всё автоматически.\n" +
@@ -329,113 +380,43 @@ namespace Oxide.Plugins
 
         #region Oxide Hooks
 
-        private void OnLootPlayer(BasePlayer player)
-        {
-            if (permission.UserHasPermission(player.UserIDString, PermissionUse))
-            {
-                UserInterface(player);
-            }
-        }
+        private void OnLootPlayer(BasePlayer player) => UiCreate(player);
 
         private void OnLootEntity(BasePlayer player, BaseEntity entity)
         {
-            DestroyOnGroundMissing check = entity.GetComponent<DestroyOnGroundMissing>();
-
-            if (check != null && check.enabled == false)
+            if (entity.IsValid() && !IsContainerExcluded(player, entity))
             {
-                return;
-            }
-
-            if (IsContainerExcluded(player, entity))
-            {
-                return;
-            }
-
-            if (permission.UserHasPermission(player.UserIDString, PermissionAutoLootAll))
-            {
-                PlayerData playerData = GetPlayerData(player.userID);
-
-                bool autoLootAll = _configData.GlobalSettings.AutoLootAll;
-
-                if (playerData != null)
-                {
-                    autoLootAll = playerData.AutoLootAll;
-                }
-
-                if (autoLootAll)
-                {
-                    timer.Once(_configData.GlobalSettings.LootAllDelay, () =>
-                    {
-                        List<ItemContainer> containers = GetLootedInventory(player);
-
-                        if (containers != null)
-                        {
-                            foreach (ItemContainer itemContainer in containers)
-                            {
-                                if (itemContainer.HasFlag(ItemContainer.Flag.NoItemInput))
-                                {
-                                    AutoLoot(player);
-                                    if (itemContainer.IsEmpty())
-                                    {
-                                        player.EndLooting();
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
-            }
-
-            if (permission.UserHasPermission(player.UserIDString, PermissionUse))
-            {
-                UserInterface(player);
+                HandleLootEntity(player);
             }
         }
 
         private void OnPlayerLootEnd(PlayerLoot inventory)
         {
-            BasePlayer player = inventory.GetComponent<BasePlayer>();
+            BasePlayer player = inventory.baseEntity;
 
-            if (player != null)
+            if (player.IsValid())
             {
-                DestroyGUI(player);
+                UiDestroy(player);
             }
         }
 
         private void OnEntityDeath(BasePlayer player, HitInfo info)
         {
-            if (player != null && !player.IsNpc && player.userID.IsSteamId())
+            if (player.IsValid() && !player.IsNpc && player.userID.IsSteamId())
             {
-                DestroyGUI(player);
+                UiDestroy(player);
             }
         }
 
         private void OnEntityKill(BasePlayer player)
         {
-            if (player != null && !player.IsNpc && player.userID.IsSteamId())
+            if (player.IsValid() && !player.IsNpc && player.userID.IsSteamId())
             {
-                DestroyGUI(player);
+                UiDestroy(player);
             }
         }
 
-        private void OnPlayerSleep(BasePlayer player) => DestroyGUI(player);
-
-        private void OnBackpackOpened(BasePlayer player, ulong backpackOwnerID, ItemContainer backpackContainer)
-        {
-            if (permission.UserHasPermission(player.UserIDString, PermissionUse))
-            {
-                UserInterface(player);
-            }
-        }
-
-        private void OnBackpackClosed(BasePlayer player, ulong backpackOwnerID, ItemContainer backpackContainer)
-        {
-            if (player != null)
-            {
-                DestroyGUI(player);
-            }
-        }
+        private void OnPlayerSleep(BasePlayer player) => UiDestroy(player);
 
         #endregion Oxide Hooks
 
@@ -445,53 +426,46 @@ namespace Oxide.Plugins
         {
             if (!permission.UserHasPermission(player.UserIDString, PermissionUse))
             {
-                PlayerSendMessage(player, Lang("NotAllowed", player.UserIDString));
+                PlayerSendMessage(player, Lang(LangKeys.Error.NoPermission, player.UserIDString));
                 return;
             }
 
-            PlayerData playerData = GetPlayerData(player.userID);
-            if (playerData == null)
-            {
-                playerData = new PlayerData
-                {
-                    Enabled = _configData.GlobalSettings.DefaultEnabled,
-                    AutoLootAll = _configData.GlobalSettings.AutoLootAll,
-                    UiStyle = _configData.GlobalSettings.DefaultUiStyle,
-                    Containers = _configData.GlobalSettings.Containers,
-                };
+            _playerData = _storedData.PlayerData[player.userID];
 
-                _storedData.PlayerData.Add(player.userID, playerData);
-                SaveData();
+            if (_playerData == null)
+            {
+                _playerData = _defaultPlayerData;
+                _storedData.PlayerData[player.userID] = _playerData;
             }
 
             if (args == null || args.Length == 0)
             {
-                PlayerSendMessage(player, Lang("SyntaxError", player.UserIDString, _configData.GlobalSettings.Commands[0]));
+                PlayerSendMessage(player, Lang(LangKeys.Error.Syntax, player.UserIDString, _configData.GlobalSettings.Commands[0]));
                 return;
             }
 
             switch (args[0].ToLower())
             {
                 case "on":
-                    if (!playerData.Enabled)
+                    if (!_playerData.Enabled)
                     {
-                        playerData.Enabled = true;
+                        _playerData.Enabled = true;
                         SaveData();
                     }
-                    PlayerSendMessage(player, Lang("QuickSort", player.UserIDString, Lang("Enabled", player.UserIDString)));
+                    PlayerSendMessage(player, Lang(LangKeys.Info.QuickSort, player.UserIDString, Lang(LangKeys.Format.Enabled, player.UserIDString)));
                     return;
                 case "off":
-                    if (playerData.Enabled)
+                    if (_playerData.Enabled)
                     {
-                        playerData.Enabled = false;
+                        _playerData.Enabled = false;
                         SaveData();
                     }
-                    PlayerSendMessage(player, Lang("QuickSort", player.UserIDString, Lang("Disabled", player.UserIDString)));
+                    PlayerSendMessage(player, Lang(LangKeys.Info.QuickSort, player.UserIDString, Lang(LangKeys.Format.Disabled, player.UserIDString)));
                     return;
                 case "auto":
-                    playerData.AutoLootAll = !playerData.AutoLootAll;
+                    _playerData.AutoLootAll = !_playerData.AutoLootAll;
                     SaveData();
-                    PlayerSendMessage(player, Lang("AutoLootAll", player.UserIDString, playerData.AutoLootAll ? Lang("Enabled", player.UserIDString) : Lang("Disabled", player.UserIDString)));
+                    PlayerSendMessage(player, Lang(LangKeys.Info.AutoLootAll, player.UserIDString, _playerData.AutoLootAll ? Lang(LangKeys.Format.Enabled, player.UserIDString) : Lang(LangKeys.Format.Disabled, player.UserIDString)));
                     return;
                 case "s":
                 case "style":
@@ -505,9 +479,9 @@ namespace Oxide.Plugins
                                 case "right":
                                 case "custom":
                                     {
-                                        playerData.UiStyle = args[1].ToLower();
+                                        _playerData.UiStyle = args[1].ToLower();
                                         SaveData();
-                                        PlayerSendMessage(player, Lang("Style", player.UserIDString, args[1].ToLower()));
+                                        PlayerSendMessage(player, Lang(LangKeys.Info.Style, player.UserIDString, args[1].ToLower()));
                                         return;
                                     }
                             }
@@ -526,15 +500,15 @@ namespace Oxide.Plugins
                                         bool flag = false;
                                         if (args.Length > 2 && bool.TryParse(args[2], out flag))
                                         {
-                                            playerData.Containers.Main = flag;
+                                            _playerData.Containers.Main = flag;
                                         }
                                         else
                                         {
-                                            playerData.Containers.Main = !playerData.Containers.Main;
+                                            _playerData.Containers.Main = !_playerData.Containers.Main;
                                         }
                                         SaveData();
 
-                                        PlayerSendMessage(player, Lang("ContainerType", player.UserIDString, "main", playerData.Containers.Main ? Lang("Enabled", player.UserIDString) : Lang("Disabled", player.UserIDString)));
+                                        PlayerSendMessage(player, Lang(LangKeys.Info.ContainerType, player.UserIDString, "main", _playerData.Containers.Main ? Lang(LangKeys.Format.Enabled, player.UserIDString) : Lang(LangKeys.Format.Disabled, player.UserIDString)));
                                         return;
                                     }
                                 case "wear":
@@ -542,15 +516,15 @@ namespace Oxide.Plugins
                                         bool flag = false;
                                         if (args.Length > 2 && bool.TryParse(args[2], out flag))
                                         {
-                                            playerData.Containers.Wear = flag;
+                                            _playerData.Containers.Wear = flag;
                                         }
                                         else
                                         {
-                                            playerData.Containers.Wear = !playerData.Containers.Wear;
+                                            _playerData.Containers.Wear = !_playerData.Containers.Wear;
                                         }
                                         SaveData();
 
-                                        PlayerSendMessage(player, Lang("ContainerType", player.UserIDString, "wear", playerData.Containers.Wear ? Lang("Enabled", player.UserIDString) : Lang("Disabled", player.UserIDString)));
+                                        PlayerSendMessage(player, Lang(LangKeys.Info.ContainerType, player.UserIDString, "wear", _playerData.Containers.Wear ? Lang(LangKeys.Format.Enabled, player.UserIDString) : Lang(LangKeys.Format.Disabled, player.UserIDString)));
                                         return;
                                     }
                                 case "belt":
@@ -558,15 +532,15 @@ namespace Oxide.Plugins
                                         bool flag = false;
                                         if (args.Length > 2 && bool.TryParse(args[2], out flag))
                                         {
-                                            playerData.Containers.Belt = flag;
+                                            _playerData.Containers.Belt = flag;
                                         }
                                         else
                                         {
-                                            playerData.Containers.Belt = !playerData.Containers.Belt;
+                                            _playerData.Containers.Belt = !_playerData.Containers.Belt;
                                         }
                                         SaveData();
 
-                                        PlayerSendMessage(player, Lang("ContainerType", player.UserIDString, "belt", playerData.Containers.Belt ? Lang("Enabled", player.UserIDString) : Lang("Disabled", player.UserIDString)));
+                                        PlayerSendMessage(player, Lang(LangKeys.Info.ContainerType, player.UserIDString, "belt", _playerData.Containers.Belt ? Lang(LangKeys.Format.Enabled, player.UserIDString) : Lang(LangKeys.Format.Disabled, player.UserIDString)));
                                         return;
                                     }
                             }
@@ -575,14 +549,14 @@ namespace Oxide.Plugins
                     }
             }
 
-            PlayerSendMessage(player, Lang("SyntaxError", player.UserIDString, _configData.GlobalSettings.Commands[0]));
+            PlayerSendMessage(player, Lang(LangKeys.Error.Syntax, player.UserIDString, _configData.GlobalSettings.Commands[0]));
         }
 
         [ConsoleCommand("quicksortgui")]
         private void SortCommand(ConsoleSystem.Arg arg)
         {
             BasePlayer player = arg.Player();
-            if (player != null && permission.UserHasPermission(player.UserIDString, PermissionUse))
+            if (player.IsValid() && permission.UserHasPermission(player.UserIDString, PermissionUse))
             {
                 try
                 {
@@ -596,9 +570,9 @@ namespace Oxide.Plugins
         private void LootAllCommand(ConsoleSystem.Arg arg)
         {
             BasePlayer player = arg.Player();
-            if (player != null && permission.UserHasPermission(player.UserIDString, PermissionLootAll))
+            if (player.IsValid() && permission.UserHasPermission(player.UserIDString, PermissionLootAll))
             {
-                timer.Once(_configData.GlobalSettings.LootAllDelay, () => AutoLoot(player));
+                timer.Once(_configData.GlobalSettings.LootAllDelay, () => LootAll(player));
             }
         }
 
@@ -606,7 +580,7 @@ namespace Oxide.Plugins
         private void LootDelayCommand(ConsoleSystem.Arg arg)
         {
             BasePlayer player = arg.Player();
-            if (player != null && player.IsAdmin)
+            if (player.IsValid() && player.IsAdmin)
             {
                 int x;
                 if (int.TryParse(arg.Args[0], out x))
@@ -621,190 +595,240 @@ namespace Oxide.Plugins
 
         #region Loot Handling
 
-        private void AutoLoot(BasePlayer player)
+        private void HandleLootEntity(BasePlayer player)
+        {//We need this to wait for container initialization
+            NextTick(() =>
+            {
+                if (permission.UserHasPermission(player.UserIDString, PermissionAutoLootAll)
+                && AutoLootAll(player))
+                {
+                    return;
+                }
+
+                UiCreate(player);
+            });
+        }
+
+        private bool AutoLootAll(BasePlayer player)
+        {
+            _playerData = GetPlayerData(player.userID);
+
+            if (!_playerData.AutoLootAll)
+            {
+                return false;
+            }
+
+            List<ItemContainer> containers = GetLootedInventory(player);
+
+            if (containers == null)
+            {
+                return false;
+            }
+
+            int fullyLooted = 0;
+            foreach (ItemContainer itemContainer in containers)
+            {
+                if (itemContainer.HasFlag(ItemContainer.Flag.NoItemInput))
+                {
+                    LootAll(player);
+                    if (itemContainer.IsEmpty())
+                    {
+                        fullyLooted++;
+                    }
+                }
+            }
+
+            if (fullyLooted > 0 && fullyLooted == containers.Count)
+            {
+                player.EndLooting();
+                // HACK: Send empty respawn information to fully close the player inventory (toggle backpack closed)
+                player.ClientRPCPlayer(null, player, "OnRespawnInformation");
+                return true;
+            }
+
+            return false;
+        }
+
+        private void LootAll(BasePlayer player)
         {
             List<ItemContainer> containers = GetLootedInventory(player);
 
-            ItemContainer playerMain = player.inventory.containerMain;
-
-            if (containers != null && playerMain != null && (containers[0].playerOwner == null || _configData.GlobalSettings.LootSleepers))
-            {
-                List<Item> itemsSelected = Pool.GetList<Item>();
-
-                foreach (ItemContainer c in containers)
-                {
-                    itemsSelected.AddRange(CloneItemList(c.itemList));
-                }
-
-                itemsSelected.Sort((item1, item2) => item2.info.itemid.CompareTo(item1.info.itemid));
-                MoveItems(itemsSelected, playerMain);
-                Pool.FreeList(ref itemsSelected);
-            }
-        }
-
-        private void SortItems(BasePlayer player, string[] args)
-        {
-            if (player == null)
+            if (containers == null)
             {
                 return;
             }
 
-            PlayerContainers type = GetPlayerData(player.userID)?.Containers;
+            if (!_configData.GlobalSettings.LootSleepers && IsOwnerSleeper(containers[0]))
+            {
+                return;
+            }
+
+            List<Item> itemsSelected = Pool.GetList<Item>();
+
+            foreach (ItemContainer itemContainer in containers)
+            {
+                for (int i = 0; i < itemContainer.itemList.Count; i++)
+                {
+                    itemsSelected.Add(itemContainer.itemList[i]);
+                }
+            }
+
+            itemsSelected.Sort((item1, item2) => item2.info.itemid.CompareTo(item1.info.itemid));
+
+            foreach (Item item in itemsSelected)
+            {
+                int amount = item.amount;
+
+                if (item.MoveToContainer(player.inventory.containerMain))
+                {
+                    _noteInv[0] = item.info.itemid;
+                    _noteInv[1] = amount;
+                    player.Command("note.inv", _noteInv);
+                    continue;
+                }
+
+                if (item.MoveToContainer(player.inventory.containerBelt))
+                {
+                    _noteInv[0] = item.info.itemid;
+                    _noteInv[1] = amount;
+                    player.Command("note.inv", _noteInv);
+                    continue;
+                }
+
+                int movedAmount = amount - item.amount;
+
+                if (movedAmount > 0)
+                {
+                    _noteInv[0] = item.info.itemid;
+                    _noteInv[1] = movedAmount;
+                    player.Command("note.inv", _noteInv);
+                }
+            }
+
+            Pool.FreeList(ref itemsSelected);
+        }
+
+        private void SortItems(BasePlayer player, string[] args)
+        {
+            if (!player.IsValid())
+            {
+                return;
+            }
+
+            PlayerContainers type = GetPlayerData(player.userID).Containers;
             ItemContainer container = GetLootedInventory(player)[0];
             ItemContainer playerMain = player.inventory?.containerMain;
             ItemContainer playerWear = player.inventory?.containerWear;
             ItemContainer playerBelt = player.inventory?.containerBelt;
 
-            if (container != null && playerMain != null && !container.HasFlag(ItemContainer.Flag.NoItemInput))
+            if (container == null || playerMain == null || container.HasFlag(ItemContainer.Flag.NoItemInput))
             {
-                List<Item> itemsSelected = Pool.GetList<Item>();
+                return;
+            }
 
-                if (args == null)
+            List<Item> itemsSelected = Pool.GetList<Item>();
+
+            if (args == null)
+            {
+                if (_configData.GlobalSettings.Containers.Main && (type == null || type.Main))
+                {
+                    for (int i = 0; i < playerMain.itemList.Count; i++)
+                    {
+                        itemsSelected.Add(playerMain.itemList[i]);
+                    }
+                }
+
+                if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type != null && type.Wear)
+                {
+                    for (int i = 0; i < playerWear.itemList.Count; i++)
+                    {
+                        itemsSelected.Add(playerWear.itemList[i]);
+                    }
+                }
+
+                if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type != null && type.Belt)
+                {
+                    for (int i = 0; i < playerBelt.itemList.Count; i++)
+                    {
+                        itemsSelected.Add(playerBelt.itemList[i]);
+                    }
+                }
+            }
+            else
+            {
+                if (args[0].Equals("existing"))
                 {
                     if (_configData.GlobalSettings.Containers.Main && (type == null || type.Main))
                     {
-                        itemsSelected.AddRange(CloneItemList(playerMain.itemList));
+                        AddExistingItems(itemsSelected, playerMain, container);
                     }
 
                     if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type != null && type.Wear)
                     {
-                        itemsSelected.AddRange(CloneItemList(playerWear.itemList));
+                        AddExistingItems(itemsSelected, playerWear, container);
                     }
 
                     if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type != null && type.Belt)
                     {
-                        itemsSelected.AddRange(CloneItemList(playerBelt.itemList));
+                        AddExistingItems(itemsSelected, playerBelt, container);
                     }
                 }
                 else
                 {
-                    if (args[0].Equals("existing"))
+                    ItemCategory category = StringToItemCategory(args[0]);
+                    if (_configData.GlobalSettings.Containers.Main && (type == null || type.Main))
                     {
-                        if (_configData.GlobalSettings.Containers.Main && (type == null || type.Main))
-                        {
-                            itemsSelected.AddRange(GetExistingItems(playerMain, container));
-                        }
-
-                        if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type != null && type.Wear)
-                        {
-                            itemsSelected.AddRange(GetExistingItems(playerWear, container));
-                        }
-
-                        if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type != null && type.Belt)
-                        {
-                            itemsSelected.AddRange(GetExistingItems(playerBelt, container));
-                        }
+                        AddItemsOfType(itemsSelected, playerMain, category);
                     }
-                    else
+
+                    if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type != null && type.Wear)
                     {
-                        ItemCategory category = StringToItemCategory(args[0]);
-                        if (_configData.GlobalSettings.Containers.Main && (type == null || type.Main))
-                        {
-                            itemsSelected.AddRange(GetItemsOfType(playerMain, category));
-                        }
-
-                        if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type != null && type.Wear)
-                        {
-                            itemsSelected.AddRange(GetItemsOfType(playerWear, category));
-                        }
-
-                        if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type != null && type.Belt)
-                        {
-                            itemsSelected.AddRange(GetItemsOfType(playerBelt, category));
-                        }
+                        AddItemsOfType(itemsSelected, playerWear, category);
                     }
-                }
 
-                IEnumerable<Item> uselessItems = GetUselessItems(itemsSelected, container);
-
-                foreach (Item item in uselessItems)
-                {
-                    itemsSelected.Remove(item);
-                }
-
-                itemsSelected.Sort((item1, item2) => item2.info.itemid.CompareTo(item1.info.itemid));
-
-                MoveItems(itemsSelected, container);
-
-                Pool.FreeList(ref itemsSelected);
-            }
-        }
-
-        #endregion Loot Handling
-
-        #region Helpers
-
-        private IEnumerable<Item> GetUselessItems(IEnumerable<Item> items, ItemContainer container)
-        {
-            BaseOven furnace = container.entityOwner?.GetComponent<BaseOven>();
-
-            List<Item> uselessItems = new List<Item>();
-
-            if (furnace != null)
-            {
-                foreach (Item item in items)
-                {
-                    ItemModCookable cookable = item.info.GetComponent<ItemModCookable>();
-
-                    if (cookable == null || cookable.lowTemp > furnace.cookingTemperature || cookable.highTemp < furnace.cookingTemperature)
+                    if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type != null && type.Belt)
                     {
-                        uselessItems.Add(item);
+                        AddItemsOfType(itemsSelected, playerBelt, category);
                     }
                 }
             }
 
-            return uselessItems;
+            itemsSelected.Sort((item1, item2) => item2.info.itemid.CompareTo(item1.info.itemid));
+
+            MoveItems(itemsSelected, container);
+
+            Pool.FreeList(ref itemsSelected);
         }
 
-        private List<Item> CloneItemList(IEnumerable<Item> list)
+        private void AddExistingItems(List<Item> list, ItemContainer primary, ItemContainer secondary)
         {
-            List<Item> clone = new List<Item>();
-
-            foreach (Item item in list)
+            if (primary == null || secondary == null)
             {
-                clone.Add(item);
+                return;
             }
 
-            return clone;
-        }
-
-        private List<Item> GetExistingItems(ItemContainer primary, ItemContainer secondary)
-        {
-            List<Item> existingItems = new List<Item>();
-
-            if (primary != null && secondary != null)
+            foreach (Item primaryItem in primary.itemList)
             {
-                foreach (Item t in primary.itemList)
+                foreach (Item secondaryItem in secondary.itemList)
                 {
-                    foreach (Item t1 in secondary.itemList)
+                    if (primaryItem.info.itemid == secondaryItem.info.itemid)
                     {
-                        if (t.info.itemid != t1.info.itemid)
-                        {
-                            continue;
-                        }
-
-                        existingItems.Add(t);
+                        list.Add(primaryItem);
                         break;
                     }
                 }
             }
-
-            return existingItems;
         }
 
-        private List<Item> GetItemsOfType(ItemContainer container, ItemCategory category)
+        private void AddItemsOfType(List<Item> list, ItemContainer container, ItemCategory category)
         {
-            List<Item> items = new List<Item>();
-
             foreach (Item item in container.itemList)
             {
                 if (item.info.category == category)
                 {
-                    items.Add(item);
+                    list.Add(item);
                 }
             }
-
-            return items;
         }
 
         private List<ItemContainer> GetLootedInventory(BasePlayer player)
@@ -819,7 +843,7 @@ namespace Oxide.Plugins
                 {
                     BaseEntity entity = container.entityOwner;
 
-                    if (entity != null && IsContainerExcluded(player, entity))
+                    if (entity.IsValid() && IsContainerExcluded(player, entity))
                     {
                         return null;
                     }
@@ -856,82 +880,235 @@ namespace Oxide.Plugins
 
         private bool IsContainerExcluded(BasePlayer player, BaseEntity entity)
         {
-            if (entity != null)
+            if (entity is ShopFront || entity is BigWheelBettingTerminal || entity is NPCVendingMachine)
             {
-                VendingMachine vendingMachine = entity as VendingMachine;
-                if (vendingMachine != null && !vendingMachine.PlayerBehind(player))
-                {
-                    return true;
-                }
+                return true;
+            }
 
-                if (entity is ShopFront || entity is BigWheelBettingTerminal)
-                {
-                    return true;
-                }
+            if (entity is VendingMachine)
+            {
+                VendingMachine vendingMachine = (VendingMachine)entity;
 
-                if (!_configData.GlobalSettings.ContainersExcluded.IsNullOrEmpty() && _configData.GlobalSettings.ContainersExcluded.Contains(entity.ShortPrefabName))
+                if (!vendingMachine.PlayerBehind(player))
                 {
                     return true;
                 }
             }
 
+            if (entity is DropBox)
+            {
+                DropBox dropBox = (DropBox)entity;
+
+                if (!dropBox.PlayerBehind(player))
+                {
+                    return true;
+                }
+            }
+
+            if (entity is IItemContainerEntity)
+            {
+                IItemContainerEntity container = (IItemContainerEntity)entity;
+
+                if (container.inventory.IsLocked())
+                {
+                    return true;
+                }
+            }
+
+            if (_cacheContainersExcluded.Contains(entity.prefabID))
+            {
+                return true;
+            }
+
+            if (Interface.CallHook("QuickSortExcluded", player, entity) != null)
+            {
+                return true;
+            }
+
             return false;
+        }
+
+        private static bool IsOwnerSleeper(ItemContainer container)
+        {
+            BasePlayer playerOwner = container.playerOwner;
+            if ((object)playerOwner == null || !IsPlayerContainer(container, playerOwner))
+                return false;
+
+            return playerOwner.IsSleeping();
+        }
+
+        private static bool IsPlayerContainer(ItemContainer container, BasePlayer player)
+        {
+            return player.inventory.containerMain == container
+                || player.inventory.containerBelt == container
+                || player.inventory.containerWear == container;
+        }
+
+        #endregion Loot Handling
+
+        #region Helpers
+
+        private void UnsubscribeHooks()
+        {
+            Unsubscribe(nameof(OnEntityDeath));
+            Unsubscribe(nameof(OnEntityKill));
+            Unsubscribe(nameof(OnLootEntity));
+            Unsubscribe(nameof(OnLootPlayer));
+            Unsubscribe(nameof(OnPlayerLootEnd));
+            Unsubscribe(nameof(OnPlayerSleep));
+        }
+
+        private void SubscribeHooks()
+        {
+            //Subscribe(nameof(OnEntityDeath));
+            //Subscribe(nameof(OnEntityKill));
+            Subscribe(nameof(OnLootEntity));
+            Subscribe(nameof(OnLootPlayer));
+            Subscribe(nameof(OnPlayerLootEnd));
+            //Subscribe(nameof(OnPlayerSleep));
+        }
+
+        private void RegisterPermissions()
+        {
+            permission.RegisterPermission(PermissionAutoLootAll, this);
+            permission.RegisterPermission(PermissionLootAll, this);
+            permission.RegisterPermission(PermissionUse, this);
+        }
+
+        private void AddCommands()
+        {
+            if (_configData.GlobalSettings.Commands.Length == 0)
+            {
+                _configData.GlobalSettings.Commands = new[] { "qs" };
+                SaveConfig();
+            }
+
+            foreach (string command in _configData.GlobalSettings.Commands)
+            {
+                cmd.AddChatCommand(command, this, nameof(CmdQuickSort));
+            }
+        }
+
+        private void CreateCache()
+        {
+            _defaultPlayerData = new PlayerData
+            {
+                Enabled = _configData.GlobalSettings.DefaultEnabled,
+                AutoLootAll = _configData.GlobalSettings.AutoLootAll,
+                UiStyle = _configData.GlobalSettings.DefaultUiStyle,
+                Containers = _configData.GlobalSettings.Containers,
+            };
+
+            foreach (string container in _configData.GlobalSettings.ContainersExcluded)
+            {
+                _cacheContainersExcluded.Add(StringPool.Get(container));
+            }
+
+            int id = 0;
+            foreach (string language in lang.GetLanguages(this))
+            {
+                _cacheLanguageIDs[language] = ++id;
+            }
         }
 
         private void PlayerSendMessage(BasePlayer player, string message)
         {
-            player.SendConsoleCommand("chat.add", 2, _configData.GlobalSettings.SteamIDIcon, string.IsNullOrEmpty(Lang("Prefix", player.UserIDString)) ? message : Lang("Prefix", player.UserIDString) + message);
+            player.SendConsoleCommand("chat.add", 2, _configData.GlobalSettings.SteamIDIcon, string.IsNullOrEmpty(Lang(LangKeys.Format.Prefix, player.UserIDString)) ? message : Lang(LangKeys.Format.Prefix, player.UserIDString) + message);
+        }
+
+        private int GetUiId(BasePlayer player, PlayerData playerData)
+        {
+            int id = 0;
+            switch (_playerData.UiStyle)
+            {
+                case "center":
+                    id += 1;
+                    break;
+                case "lite":
+                    id += 2;
+                    break;
+                case "right":
+                    id += 3;
+                    break;
+                case "custom":
+                    id += 4;
+                    break;
+            }
+            //Max. value = 2
+            id *= 10;
+            if (permission.UserHasPermission(player.UserIDString, PermissionLootAll))
+            {
+                id += 1;
+            }
+            //Max. value = 7117
+            id *= 10000;
+            id += _cacheLanguageIDs[lang.GetLanguage(player.UserIDString)];
+
+            return id;
         }
 
         #endregion Helpers
 
         #region User Interface
 
-        private void UserInterface(BasePlayer player)
+        private void UiCreate(BasePlayer player)
         {
-            PlayerData playerData = GetPlayerData(player.userID);
-
-            bool enabled = _configData.GlobalSettings.DefaultEnabled;
-
-            if (playerData != null)
-            {
-                enabled = playerData.Enabled;
-            }
-
-            if (!enabled)
+            if (!permission.UserHasPermission(player.UserIDString, PermissionUse))
             {
                 return;
             }
 
-            DestroyGUI(player);
+            _playerData = GetPlayerData(player.userID);
 
-            string uiStyle = _configData.GlobalSettings.DefaultUiStyle;
-
-            if (playerData != null)
+            if (!_playerData.Enabled)
             {
-                uiStyle = playerData.UiStyle;
+                return;
             }
 
-            switch (uiStyle)
+            UiDestroy(player);
+
+            if (!_uiViewers.Add(player.userID))
             {
-                case "center":
-                    UiCenter(player);
-                    break;
-                case "lite":
-                    UiLite(player);
-                    break;
-                case "right":
-                    UiRight(player);
-                    break;
-                case "custom":
-                    UiCustom(player);
-                    break;
+                return;
             }
+
+            int uiId = GetUiId(player, _playerData);
+            string cachedJson = _cacheUiJson[uiId];
+
+            if (string.IsNullOrWhiteSpace(cachedJson))
+            {
+                switch (_playerData.UiStyle)
+                {
+                    case "center":
+                        cachedJson = UiGetJsonCenter(player);
+                        break;
+                    case "lite":
+                        cachedJson = UiGetJsonLite(player);
+                        break;
+                    case "right":
+                        cachedJson = UiGetJsonRight(player);
+                        break;
+                    case "custom":
+                        cachedJson = UiGetJsonCustom(player);
+                        break;
+                }
+                _cacheUiJson[uiId] = cachedJson;
+            }
+
+            CuiHelper.AddUi(player, cachedJson);
+        }
+
+        private void UiDestroy(BasePlayer player)
+        {
+            if (!_uiViewers.Remove(player.userID))
+                return;
+
+            CuiHelper.DestroyUi(player, GUIPanelName);
         }
 
         #region UI Custom
 
-        private void UiCustom(BasePlayer player)
+        private string UiGetJsonCustom(BasePlayer player)
         {
             CuiElementContainer elements = new CuiElementContainer();
             ConfigData.UiConfiguration customUISettings = _configData.CustomUISettings;
@@ -950,7 +1127,7 @@ namespace Oxide.Plugins
             //left
             elements.Add(new CuiLabel
             {
-                Text = { Text = Lang("Deposit", player.UserIDString), FontSize = customUISettings.TextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor },
+                Text = { Text = Lang(LangKeys.Format.Deposit, player.UserIDString), FontSize = customUISettings.TextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor },
                 RectTransform = { AnchorMin = "0.02 0.8", AnchorMax = "0.35 1" }
             }, panel);
 
@@ -958,14 +1135,14 @@ namespace Oxide.Plugins
             {
                 Button = { Command = "quicksortgui existing", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.02 0.6", AnchorMax = "0.35 0.8" },
-                Text = { Text = Lang("DepositExisting", player.UserIDString), FontSize = customUISettings.TextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Existing, player.UserIDString), FontSize = customUISettings.TextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.02 0.35", AnchorMax = "0.35 0.55" },
-                Text = { Text = Lang("DepositAll", player.UserIDString), FontSize = customUISettings.TextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.All, player.UserIDString), FontSize = customUISettings.TextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             if (permission.UserHasPermission(player.UserIDString, PermissionLootAll))
@@ -974,7 +1151,7 @@ namespace Oxide.Plugins
                 {
                     Button = { Command = "quicksortgui.lootall", Color = customUISettings.LootAllColor },
                     RectTransform = { AnchorMin = "0.02 0.05", AnchorMax = "0.35 0.3" },
-                    Text = { Text = Lang("LootAll", player.UserIDString), FontSize = customUISettings.TextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                    Text = { Text = Lang(LangKeys.Format.LootAll, player.UserIDString), FontSize = customUISettings.TextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
                 }, panel);
             }
 
@@ -983,42 +1160,42 @@ namespace Oxide.Plugins
             {
                 Button = { Command = "quicksortgui weapon", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.37 0.818", AnchorMax = "0.65 0.949" },
-                Text = { Text = Lang("DepositWeapons", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Weapons, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui ammunition", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.37 0.664", AnchorMax = "0.65 0.796" },
-                Text = { Text = Lang("DepositAmmo", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Ammo, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui medical", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.37 0.511", AnchorMax = "0.65 0.642" },
-                Text = { Text = Lang("DepositMedical", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Medical, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui attire", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.37 0.358", AnchorMax = "0.65 0.489" },
-                Text = { Text = Lang("DepositAttire", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Attire, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui resources", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.37 0.204", AnchorMax = "0.65 0.336" },
-                Text = { Text = Lang("DepositResources", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Resources, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui component", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.37 0.051", AnchorMax = "0.65 0.182" },
-                Text = { Text = Lang("DepositComponents", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Components, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             //right
@@ -1026,59 +1203,59 @@ namespace Oxide.Plugins
             {
                 Button = { Command = "quicksortgui construction", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.67 0.818", AnchorMax = "0.98 0.949" },
-                Text = { Text = Lang("DepositConstruction", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Construction, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui items", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.67 0.664", AnchorMax = "0.98 0.796" },
-                Text = { Text = Lang("DepositItems", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Deployables, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui tool", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.67 0.511", AnchorMax = "0.98 0.642" },
-                Text = { Text = Lang("DepositTools", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Tools, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui food", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.67 0.358", AnchorMax = "0.82 0.489" },
-                Text = { Text = Lang("DepositFood", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Food, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui misc", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.83 0.358", AnchorMax = "0.98 0.489" },
-                Text = { Text = Lang("DepositMisc", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Misc, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui traps", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.67 0.204", AnchorMax = "0.98 0.336" },
-                Text = { Text = Lang("DepositTraps", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Traps, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui electrical", Color = customUISettings.ButtonsColor },
                 RectTransform = { AnchorMin = "0.67 0.051", AnchorMax = "0.98 0.182" },
-                Text = { Text = Lang("DepositElectrical", player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
+                Text = { Text = Lang(LangKeys.Format.Electrical, player.UserIDString), FontSize = customUISettings.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = customUISettings.TextColor }
             }, panel);
 
-            CuiHelper.AddUi(player, elements);
+            return CuiHelper.ToJson(elements);
         }
 
         #endregion UI Custom
 
         #region UI Center
 
-        private void UiCenter(BasePlayer player)
+        private string UiGetJsonCenter(BasePlayer player)
         {
             CuiElementContainer elements = new CuiElementContainer();
 
@@ -1096,7 +1273,7 @@ namespace Oxide.Plugins
             //left
             elements.Add(new CuiLabel
             {
-                Text = { Text = Lang("Deposit", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"},
+                Text = { Text = Lang(LangKeys.Format.Deposit, player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" },
                 RectTransform = { AnchorMin = "0.02 0.8", AnchorMax = "0.35 1" }
             }, panel);
 
@@ -1104,14 +1281,14 @@ namespace Oxide.Plugins
             {
                 Button = { Command = "quicksortgui existing", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.02 0.6", AnchorMax = "0.35 0.8" },
-                Text = { Text = Lang("DepositExisting", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Existing, player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.02 0.35", AnchorMax = "0.35 0.55" },
-                Text = { Text = Lang("DepositAll", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.All, player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             if (permission.UserHasPermission(player.UserIDString, PermissionLootAll))
@@ -1120,7 +1297,7 @@ namespace Oxide.Plugins
                 {
                     Button = { Command = "quicksortgui.lootall", Color = "0.41 0.50 0.25 0.8" },
                     RectTransform = { AnchorMin = "0.02 0.05", AnchorMax = "0.35 0.3" },
-                    Text = { Text = Lang("LootAll", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                    Text = { Text = Lang(LangKeys.Format.LootAll, player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
                 }, panel);
             }
 
@@ -1129,42 +1306,42 @@ namespace Oxide.Plugins
             {
                 Button = { Command = "quicksortgui weapon", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.37 0.818", AnchorMax = "0.65 0.949" },
-                Text = { Text = Lang("DepositWeapons", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Weapons, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui ammunition", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.37 0.664", AnchorMax = "0.65 0.796" },
-                Text = { Text = Lang("DepositAmmo", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Ammo, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui medical", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.37 0.511", AnchorMax = "0.65 0.642" },
-                Text = { Text = Lang("DepositMedical", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Medical, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui attire", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.37 0.358", AnchorMax = "0.65 0.489" },
-                Text = { Text = Lang("DepositAttire", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Attire, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui resources", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.37 0.204", AnchorMax = "0.65 0.336" },
-                Text = { Text = Lang("DepositResources", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Resources, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui component", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.37 0.051", AnchorMax = "0.65 0.182" },
-                Text = { Text = Lang("DepositComponents", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Components, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             //right
@@ -1172,59 +1349,59 @@ namespace Oxide.Plugins
             {
                 Button = { Command = "quicksortgui construction", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.67 0.818", AnchorMax = "0.98 0.949" },
-                Text = { Text = Lang("DepositConstruction", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Construction, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui items", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.67 0.664", AnchorMax = "0.98 0.796" },
-                Text = { Text = Lang("DepositItems", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Deployables, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui tool", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.67 0.511", AnchorMax = "0.98 0.642" },
-                Text = { Text = Lang("DepositTools", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Tools, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui food", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.67 0.358", AnchorMax = "0.82 0.489" },
-                Text = { Text = Lang("DepositFood", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Food, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui misc", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.83 0.358", AnchorMax = "0.98 0.489" },
-                Text = { Text = Lang("DepositMisc", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Misc, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui traps", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.67 0.204", AnchorMax = "0.98 0.336" },
-                Text = { Text = Lang("DepositTraps", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
+                Text = { Text = Lang(LangKeys.Format.Traps, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui electrical", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.67 0.051", AnchorMax = "0.98 0.182" },
-                Text = { Text = Lang("DepositElectrical", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                Text = { Text = Lang(LangKeys.Format.Electrical, player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
-            CuiHelper.AddUi(player, elements);
+            return CuiHelper.ToJson(elements);
         }
 
         #endregion UI Center
 
         #region UI Lite
 
-        private void UiLite(BasePlayer player)
+        private string UiGetJsonLite(BasePlayer player)
         {
             CuiElementContainer elements = new CuiElementContainer();
 
@@ -1243,14 +1420,14 @@ namespace Oxide.Plugins
             {
                 Button = { Command = "quicksortgui existing", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "0.44 1" },
-                Text = { Text = Lang("DepositExisting", player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                Text = { Text = Lang(LangKeys.Format.Existing, player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui", Color = "0.75 0.43 0.18 0.8" },
                 RectTransform = { AnchorMin = "0.46 0", AnchorMax = "0.60 1" },
-                Text = { Text = Lang("DepositAll", player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                Text = { Text = Lang(LangKeys.Format.All, player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             if (permission.UserHasPermission(player.UserIDString, PermissionLootAll))
@@ -1259,164 +1436,165 @@ namespace Oxide.Plugins
                 {
                     Button = { Command = "quicksortgui.lootall", Color = "0.41 0.50 0.25 0.8" },
                     RectTransform = { AnchorMin = "0.62 0", AnchorMax = "1 1" },
-                    Text = { Text = Lang("LootAll", player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                    Text = { Text = Lang(LangKeys.Format.LootAll, player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
                 }, panel);
             }
 
-            CuiHelper.AddUi(player, elements);
+            return CuiHelper.ToJson(elements);
         }
 
         #endregion UI Lite
 
         #region UI Right
 
-        private void UiRight(BasePlayer player)
+        private string UiGetJsonRight(BasePlayer player)
         {
             CuiElementContainer elements = new CuiElementContainer();
 
             string panel = elements.Add(new CuiPanel
             {
-                Image = { Color = "0.5 0.5 0.5 0.33" },
-                RectTransform = {                    
+                Image = { Color = "0.3 0.3 0.3 1" },
+                RectTransform = {
                     AnchorMin = "0.5 1.0",
                     AnchorMax = "0.5 1.0",
-                    OffsetMin = "192 -137",
-                    OffsetMax = "573 0"
+                    OffsetMin = "192.5 -88.7",
+                    OffsetMax = "572.5 0"
                 }
             }, "Hud.Menu", GUIPanelName);
 
-            //left
+            /*left
             elements.Add(new CuiLabel
             {
-                Text = { Text = Lang("Deposit", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" },
+                Text = { Text = Lang(LangKeys.Format.Deposit, player.UserIDString), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" },
                 RectTransform = { AnchorMin = "0.02 0.8", AnchorMax = "0.35 1" }
+            }, panel);*/
+
+            //First column
+            elements.Add(new CuiButton
+            {
+                Button = { Command = "quicksortgui weapon", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.0 0.765", AnchorMax = "0.239 0.98" },
+                Text = { Text = Lang(LangKeys.Format.Weapons, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui existing", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.02 0.6", AnchorMax = "0.35 0.8" },
-                Text = { Text = Lang("DepositExisting", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.0 0.51", AnchorMax = "0.239 0.725" },
+                Text = { Text = Lang(LangKeys.Format.Existing, player.UserIDString), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.02 0.35", AnchorMax = "0.35 0.55" },
-                Text = { Text = Lang("DepositAll", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.0 0.255", AnchorMax = "0.239 0.47" },
+                Text = { Text = Lang(LangKeys.Format.All, player.UserIDString), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             if (permission.UserHasPermission(player.UserIDString, PermissionLootAll))
             {
                 elements.Add(new CuiButton
                 {
-                    Button = { Command = "quicksortgui.lootall", Color = "0.41 0.50 0.25 0.8" },
-                    RectTransform = { AnchorMin = "0.02 0.05", AnchorMax = "0.35 0.3" },
-                    Text = { Text = Lang("LootAll", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                    Button = { Command = "quicksortgui.lootall", Color = "0.41 0.50 0.25 1" },
+                    RectTransform = { AnchorMin = "0.0 0.0", AnchorMax = "0.239 0.215" },
+                    Text = { Text = Lang(LangKeys.Format.LootAll, player.UserIDString), FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
                 }, panel);
             }
 
-            //center
-            elements.Add(new CuiButton
-            {
-                Button = { Command = "quicksortgui weapon", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.37 0.818", AnchorMax = "0.65 0.949" },
-                Text = { Text = Lang("DepositWeapons", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
-            }, panel);
+            //Second column
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui ammunition", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.37 0.664", AnchorMax = "0.65 0.796" },
-                Text = { Text = Lang("DepositAmmo", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.249 0.765", AnchorMax = "0.488 0.98" },
+                Text = { Text = Lang(LangKeys.Format.Ammo, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui medical", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.37 0.511", AnchorMax = "0.65 0.642" },
-                Text = { Text = Lang("DepositMedical", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.249 0.51", AnchorMax = "0.488 0.725" },
+                Text = { Text = Lang(LangKeys.Format.Medical, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui attire", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.37 0.358", AnchorMax = "0.65 0.489" },
-                Text = { Text = Lang("DepositAttire", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.249 0.255", AnchorMax = "0.488 0.47" },
+                Text = { Text = Lang(LangKeys.Format.Attire, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui resources", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.37 0.204", AnchorMax = "0.65 0.336" },
-                Text = { Text = Lang("DepositResources", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.249 0.0", AnchorMax = "0.488 0.215" },
+                Text = { Text = Lang(LangKeys.Format.Resources, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
+
+            //Third column
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui component", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.37 0.051", AnchorMax = "0.65 0.182" },
-                Text = { Text = Lang("DepositComponents", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.498 0.765", AnchorMax = "0.737 0.98" },
+                Text = { Text = Lang(LangKeys.Format.Components, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
-            //right
+
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui construction", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.67 0.818", AnchorMax = "0.98 0.949" },
-                Text = { Text = Lang("DepositConstruction", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.498 0.51", AnchorMax = "0.737 0.725" },
+                Text = { Text = Lang(LangKeys.Format.Construction, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui items", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.67 0.664", AnchorMax = "0.98 0.796" },
-                Text = { Text = Lang("DepositItems", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.498 0.255", AnchorMax = "0.737 0.47" },
+                Text = { Text = Lang(LangKeys.Format.Deployables, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui tool", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.67 0.511", AnchorMax = "0.98 0.642" },
-                Text = { Text = Lang("DepositTools", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.498 0.0", AnchorMax = "0.737 0.215" },
+                Text = { Text = Lang(LangKeys.Format.Tools, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
+
+            //Fourth column
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui food", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.67 0.358", AnchorMax = "0.82 0.489" },
-                Text = { Text = Lang("DepositFood", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.747 0.765", AnchorMax = "0.997 0.98" },
+                Text = { Text = Lang(LangKeys.Format.Food, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui misc", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.83 0.358", AnchorMax = "0.98 0.489" },
-                Text = { Text = Lang("DepositMisc", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.747 0.51", AnchorMax = "0.997 0.725" },
+                Text = { Text = Lang(LangKeys.Format.Misc, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui traps", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.67 0.204", AnchorMax = "0.98 0.336" },
-                Text = { Text = Lang("DepositTraps", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.747 0.255", AnchorMax = "0.997 0.47" },
+                Text = { Text = Lang(LangKeys.Format.Traps, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui electrical", Color = "0.75 0.43 0.18 0.8" },
-                RectTransform = { AnchorMin = "0.67 0.051", AnchorMax = "0.98 0.182" },
-                Text = { Text = Lang("DepositElectrical", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
+                RectTransform = { AnchorMin = "0.747 0.0", AnchorMax = "0.997 0.215" },
+                Text = { Text = Lang(LangKeys.Format.Electrical, player.UserIDString), FontSize = 10, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
-            CuiHelper.AddUi(player, elements);
+            return CuiHelper.ToJson(elements);
         }
 
         #endregion UI Right
-
-        private void DestroyGUI(BasePlayer player)
-        {
-            CuiHelper.DestroyUi(player, GUIPanelName);
-        }
 
         #endregion User Interface
     }

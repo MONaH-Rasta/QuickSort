@@ -18,10 +18,10 @@
 ## Configuration
 ```json
 {
+{
   "Global settings": {
     "Default enabled": true,
     "Default UI style (center, lite, right, custom)": "right",
-    "Enable Backpacks plugin support": true,
     "Loot all delay in seconds (0 to disable)": 0,
     "Enable loot all on the sleepers": false,
     "Auto loot all enabled by default": false,
@@ -36,17 +36,11 @@
       "quicksort"
     ],
     "Excluded containers": [
-      "autoturret_deployed",
-      "dropbox.deployed",
-      "flameturret.deployed",
-      "guntrap.deployed",
-      "sam_site_turret_deployed",
-      "sam_static",
-      "scientist_turret_any",
-      "scientist_turret_lr300",
-      "wall.frame.shopfront",
-      "wall.frame.shopfront.metal",
-      "wall.frame.shopfront.metal.static"
+      "assets/prefabs/deployable/single shot trap/guntrap.deployed.prefab",
+      "assets/prefabs/npc/autoturret/autoturret_deployed.prefab",
+      "assets/prefabs/npc/flame turret/flameturret.deployed.prefab",
+      "assets/prefabs/npc/sam_site_turret/sam_site_turret_deployed.prefab",
+      "assets/prefabs/npc/sam_site_turret/sam_static.prefab"
     ]
   },
   "Custom UI Settings": {
@@ -67,32 +61,32 @@
 ## Localization
 ```json
 {
-  "Deposit": "Deposit",
-  "DepositAll": "All",
-  "DepositAmmo": "Ammo",
-  "DepositAttire": "Attire",
-  "DepositConstruction": "Construction",
-  "DepositElectrical": "Electrical",
-  "DepositExisting": "Existing",
-  "DepositFood": "Food",
-  "DepositItems": "Deployables",
-  "DepositMedical": "Medical",
-  "DepositResources": "Resources",
-  "DepositTools": "Tools",
-  "DepositTraps": "Traps",
-  "DepositWeapons": "Weapons",
-  "DepositComponents": "Components",
-  "DepositMisc": "Misc",
-  "LootAll": "Loot All",
-  "NotAllowed": "You do not have permission to use this command",
-  "Enabled": "<color=#228B22>Enabled</color>",
-  "Disabled": "<color=#B22222>Disabled</color>",
-  "QuickSort": "Quick Sort GUI is now {0}",
-  "Style": "Quick Sort GUI style is now {0}",
-  "AutoLootAll": "Automated looting is now {0}",
-  "ContainerType": "Quick Sort for container type {0} is now {1}",
-  "Prefix": "<color=#00FF00>[Quick Sort]</color>: ",
-  "SyntaxError": "List Commands:\n<color=#FFFF00>/{0} on</color> - Enable GUI\n<color=#FFFF00>/{0} off</color> - Disable GUI\n<color=#FFFF00>/{0} auto</color> - Enable/Disable automated looting\n<color=#FFFF00>/{0} <s | style> <center | lite | right | custom></color> - change GUI style\n<color=#FFFF00>/{0} <c | conatiner> <main | wear | belt></color> - add/remove container type from the sort"
+  "Error.NoPermission": "You do not have permission to use this command!",
+  "Format.All": "All",
+  "Format.Ammo": "Ammo",
+  "Format.Attire": "Attire",
+  "Format.Components": "Components",
+  "Format.Construction": "Construction",
+  "Format.Deployables": "Deployables",
+  "Format.Deposit": "Deposit",
+  "Format.Disabled": "<color=#B22222>Disabled</color>",
+  "Format.Electrical": "Electrical",
+  "Format.Enabled": "<color=#228B22>Enabled</color>",
+  "Format.Existing": "Existing",
+  "Format.Food": "Food",
+  "Format.LootAll": "Loot All",
+  "Format.Medical": "Medical",
+  "Format.Misc": "Misc",
+  "Format.Prefix": "<color=#00FF00>[Quick Sort]</color>: ",
+  "Format.Resources": "Resources",
+  "Format.Tools": "Tools",
+  "Format.Traps": "Traps",
+  "Format.Weapons": "Weapons",
+  "Info.AutoLootAll": "Automated looting is now {0}",
+  "Info.ContainerType": "Quick Sort for container type {0} is now {1}",
+  "Info.QuickSort": "Quick Sort GUI is now {0}",
+  "Info.Style": "Quick Sort GUI style is now {0}",
+  "Error.Syntax": "List Commands:\n<color=#FFFF00>/{0} on</color> - Enable GUI\n<color=#FFFF00>/{0} off</color> - Disable GUI\n<color=#FFFF00>/{0} auto</color> - Enable/Disable automated looting\n<color=#FFFF00>/{0} <s | style> <center | lite | right | custom></color> - change GUI style\n<color=#FFFF00>/{0} <c | conatiner> <main | wear | belt></color> - add/remove container type from the sort"
 }
 ```
 
