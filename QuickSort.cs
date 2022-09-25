@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "Frenk92", "1.3.2")]
+    [Info("Quick Sort", "Frenk92", "1.3.3")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     class QuickSort : CovalencePlugin
     {
@@ -373,7 +373,8 @@ namespace Oxide.Plugins
 
         private void SortItems(BasePlayer player, string[] args)
         {
-            var type = GetPlayerData(player.UserIDString).Containers;
+            if (player == null) return;
+            var type = GetPlayerData(player.UserIDString)?.Containers;
             ItemContainer container = GetLootedInventory(player)[0];
             ItemContainer playerMain = player.inventory.containerMain;
             ItemContainer playerWear = player.inventory.containerWear;
@@ -385,6 +386,7 @@ namespace Oxide.Plugins
 
                 if (args.Length == 1)
                 {
+                    if (string.IsNullOrEmpty(args[0])) return;
                     if (args[0].Equals("existing"))
                     {
                         if (config.Containers.Main && (type == null || type.Main))
