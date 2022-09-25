@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "Frenk92", "1.3.5")]
+    [Info("Quick Sort", "Frenk92", "1.3.6")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     class QuickSort : CovalencePlugin
     {
@@ -176,6 +176,12 @@ namespace Oxide.Plugins
 
         private void OnLootEntity(BasePlayer player, BaseEntity entity)
         {
+            var check = entity.GetComponent<DestroyOnGroundMissing>();
+	        if (check != null && check.enabled == false)
+	        {
+		        return;
+	        }
+        
             if (permission.UserHasPermission(player.UserIDString, permUse) && !(entity is VendingMachine) && !(entity is ShopFront) && !(entity is BigWheelBettingTerminal))
             {
                 UserInterface(player);
