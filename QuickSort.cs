@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "MON@H", "1.4.0")]
+    [Info("Quick Sort", "MON@H", "1.5.0")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     public class QuickSort : CovalencePlugin
     {
@@ -52,6 +52,9 @@ namespace Oxide.Plugins
 
         private class ConfigData
         {
+            [JsonProperty(PropertyName = "Use permissions")]
+            public bool usePermission = true;
+
             [JsonProperty(PropertyName = "Global settings")]
             public GlobalSettings globalS = new GlobalSettings();
 
@@ -63,9 +66,6 @@ namespace Oxide.Plugins
 
             public class GlobalSettings
             {
-                [JsonProperty(PropertyName = "Use permissions")]
-                public bool usePermission = true;
-
                 [JsonProperty(PropertyName = "Allows admins to use Quick Sort without permission")]
                 public bool adminsAllowed = true;
 
@@ -94,26 +94,33 @@ namespace Oxide.Plugins
                 [JsonProperty(PropertyName = "Excluded containers")]
                 public string[] containersExcluded = new[]
                 {
+                    "autoturret_deployed",
                     "bandit_shopkeeper",
                     "bigwheelbettingterminal",
                     "dropbox.deployed",
+                    "flameturret.deployed",
+                    "guntrap.deployed",
                     "npcvendingmachine",
-                    "npcvendingmachine", 
-                    "npcvendingmachine_attire", 
+                    "npcvendingmachine",
+                    "npcvendingmachine_attire",
                     "npcvendingmachine_building",
-                    "npcvendingmachine_building", 
-                    "npcvendingmachine_building_hapis", 
-                    "npcvendingmachine_buyres_hapis", 
-                    "npcvendingmachine_components", 
-                    "npcvendingmachine_food_hapis", 
-                    "npcvendingmachine_hapis_hapis", 
-                    "npcvendingmachine_resources", 
-                    "npcvendingmachine_tools", 
-                    "npcvendingmachine_weapons", 
-                    "npcvendingmachine_weapons_hapis", 
+                    "npcvendingmachine_building",
+                    "npcvendingmachine_building_hapis",
+                    "npcvendingmachine_buyres_hapis",
+                    "npcvendingmachine_components",
+                    "npcvendingmachine_food_hapis",
+                    "npcvendingmachine_hapis_hapis",
+                    "npcvendingmachine_resources",
+                    "npcvendingmachine_tools",
+                    "npcvendingmachine_weapons",
+                    "npcvendingmachine_weapons_hapis",
+                    "sam_site_turret_deployed",
+                    "sam_static",
+                    "scientist_turret_any",
+                    "scientist_turret_lr300",
                     "shopkeeper_vm_invis",
-                    "shopkeeper_vm_invis", 
-                    "vending_mapmarker", 
+                    "shopkeeper_vm_invis",
+                    "vending_mapmarker",
                     "vendingmachine.deployed",
                     "wall.frame.shopfront",
                     "wall.frame.shopfront.metal",
@@ -126,12 +133,14 @@ namespace Oxide.Plugins
 
             public class UiSettings
             {
-                public string AnchorMin = "0.650 0.83";
-                public string AnchorMax = "0.946 0.996";
+                public string AnchorsMin = "0.5 1.0";
+                public string AnchorsMax = "0.5 1.0";
+                public string OffsetsMin = "192 -137";
+                public string OffsetsMax = "573 0";
                 public string Color = "0.5 0.5 0.5 0.33";
-                public string ButtonsColor = "1 0.5 0 0.5";
-                public string LootAllColor = "0 0.7 0 0.5";
-                public string TextColor = "#FFFFFF";
+                public string ButtonsColor = "0.75 0.43 0.18 0.8";
+                public string LootAllColor = "0.41 0.50 0.25 0.8";
+                public string TextColor = "0.77 0.92 0.67 0.8";
                 public int TextSize = 16;
                 public int CategoriesTextSize = 14;
             }
@@ -337,6 +346,7 @@ namespace Oxide.Plugins
             }
             else if (UserHasPerm(player, permAutoLootAll))
             {
+
                 var playerData = GetPlayerData(player.userID);
                 var autoLootAll = configData.globalS.autoLootAll;
                 if (playerData != null) autoLootAll = playerData.autoLootAll;
@@ -356,8 +366,8 @@ namespace Oxide.Plugins
                                     if (c.IsEmpty())
                                     {
                                         player.EndLooting();
+                                        return;
                                     }
-                                    return;
                                 }
                             }
                         }
@@ -410,7 +420,7 @@ namespace Oxide.Plugins
 
         private void CmdQuickSort(IPlayer player, string command, string[] args)
         {
-            if (configData.globalS.usePermission && !permission.UserHasPermission(player.Id, permUse))
+            if (configData.usePermission && !permission.UserHasPermission(player.Id, permUse))
             {
                 if (!configData.globalS.adminsAllowed || !player.IsAdmin)
                 {
@@ -737,11 +747,11 @@ namespace Oxide.Plugins
         {
             if (player != null)
             {
-                if (!configData.globalS.usePermission)
+                if (!configData.usePermission)
                 {
                     return true;
                 }
-                else if (configData.globalS.usePermission && permission.UserHasPermission(player.UserIDString, perm))
+                else if (configData.usePermission && permission.UserHasPermission(player.UserIDString, perm))
                 {
                     return true;
                 }
@@ -824,24 +834,29 @@ namespace Oxide.Plugins
             string panel = elements.Add(new CuiPanel
             {
                 Image = { Color = cfg.Color },
-                RectTransform = { AnchorMin = cfg.AnchorMin, AnchorMax = cfg.AnchorMax }
+                RectTransform = {
+                    AnchorMin = cfg.AnchorsMin,
+                    AnchorMax = cfg.AnchorsMax,
+                    OffsetMin = cfg.OffsetsMin,
+                    OffsetMax = cfg.OffsetsMax
+                }
             }, "Hud.Menu", guiInfo[player.userID]);
             //left
             elements.Add(new CuiLabel
             {
                 Text = { Text = Lang("Deposit", player.UserIDString), FontSize = cfg.TextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor },
-                RectTransform = { AnchorMin = "0.02 0.8", AnchorMax = "0.3 1" }
+                RectTransform = { AnchorMin = "0.02 0.8", AnchorMax = "0.35 1" }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui existing", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.02 0.6", AnchorMax = "0.3 0.8" },
+                RectTransform = { AnchorMin = "0.02 0.6", AnchorMax = "0.35 0.8" },
                 Text = { Text = Lang("DepositExisting", player.UserIDString), FontSize = cfg.TextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.02 0.35", AnchorMax = "0.3 0.55" },
+                RectTransform = { AnchorMin = "0.02 0.35", AnchorMax = "0.35 0.55" },
                 Text = { Text = Lang("DepositAll", player.UserIDString), FontSize = cfg.TextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             if (UserHasPerm(player, permLootAll))
@@ -849,7 +864,7 @@ namespace Oxide.Plugins
                 elements.Add(new CuiButton
                 {
                     Button = { Command = "quicksortgui.lootall", Color = cfg.LootAllColor },
-                    RectTransform = { AnchorMin = "0.02 0.05", AnchorMax = "0.3 0.3" },
+                    RectTransform = { AnchorMin = "0.02 0.05", AnchorMax = "0.35 0.3" },
                     Text = { Text = Lang("LootAll", player.UserIDString), FontSize = cfg.TextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
                 }, panel);
             }
@@ -857,74 +872,74 @@ namespace Oxide.Plugins
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui weapon", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.35 0.818", AnchorMax = "0.63 0.949" },
+                RectTransform = { AnchorMin = "0.37 0.818", AnchorMax = "0.65 0.949" },
                 Text = { Text = Lang("DepositWeapons", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui ammunition", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.35 0.664", AnchorMax = "0.63 0.796" },
+                RectTransform = { AnchorMin = "0.37 0.664", AnchorMax = "0.65 0.796" },
                 Text = { Text = Lang("DepositAmmo", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui medical", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.35 0.511", AnchorMax = "0.63 0.642" },
+                RectTransform = { AnchorMin = "0.37 0.511", AnchorMax = "0.65 0.642" },
                 Text = { Text = Lang("DepositMedical", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui attire", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.35 0.358", AnchorMax = "0.63 0.489" },
+                RectTransform = { AnchorMin = "0.37 0.358", AnchorMax = "0.65 0.489" },
                 Text = { Text = Lang("DepositAttire", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui resources", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.35 0.204", AnchorMax = "0.63 0.336" },
+                RectTransform = { AnchorMin = "0.37 0.204", AnchorMax = "0.65 0.336" },
                 Text = { Text = Lang("DepositResources", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui component", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.35 0.051", AnchorMax = "0.63 0.182" },
+                RectTransform = { AnchorMin = "0.37 0.051", AnchorMax = "0.65 0.182" },
                 Text = { Text = Lang("DepositComponents", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             //right
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui construction", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.67 0.818", AnchorMax = "0.95 0.949" },
+                RectTransform = { AnchorMin = "0.67 0.818", AnchorMax = "0.98 0.949" },
                 Text = { Text = Lang("DepositConstruction", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui items", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.67 0.664", AnchorMax = "0.95 0.796" },
+                RectTransform = { AnchorMin = "0.67 0.664", AnchorMax = "0.98 0.796" },
                 Text = { Text = Lang("DepositItems", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui tool", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.67 0.511", AnchorMax = "0.95 0.642" },
+                RectTransform = { AnchorMin = "0.67 0.511", AnchorMax = "0.98 0.642" },
                 Text = { Text = Lang("DepositTools", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui food", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.67 0.358", AnchorMax = "0.95 0.489" },
+                RectTransform = { AnchorMin = "0.67 0.358", AnchorMax = "0.98 0.489" },
                 Text = { Text = Lang("DepositFood", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui traps", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.67 0.204", AnchorMax = "0.95 0.336" },
+                RectTransform = { AnchorMin = "0.67 0.204", AnchorMax = "0.98 0.336" },
                 Text = { Text = Lang("DepositTraps", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
             elements.Add(new CuiButton
             {
                 Button = { Command = "quicksortgui misc", Color = cfg.ButtonsColor },
-                RectTransform = { AnchorMin = "0.67 0.051", AnchorMax = "0.95 0.182" },
+                RectTransform = { AnchorMin = "0.67 0.051", AnchorMax = "0.98 0.182" },
                 Text = { Text = Lang("DepositMisc", player.UserIDString), FontSize = cfg.CategoriesTextSize, Align = TextAnchor.MiddleCenter, Color = cfg.TextColor }
             }, panel);
 
@@ -942,108 +957,113 @@ namespace Oxide.Plugins
             string panel = elements.Add(new CuiPanel
             {
                 Image = { Color = "0.5 0.5 0.5 0.33" },
-                RectTransform = { AnchorMin = "0.354 0.625", AnchorMax = "0.633 0.816" }
+                RectTransform = {
+                    AnchorMin = "0.5 0.0",
+                    AnchorMax = "0.5 0.0",
+                    OffsetMin = "-198 472",
+                    OffsetMax = "182 626"
+                }
             }, "Hud.Menu", guiInfo[player.userID]);
             //left
             elements.Add(new CuiLabel
             {
-                Text = { Text = Lang("Deposit"), FontSize = 16, Align = TextAnchor.MiddleCenter },
-                RectTransform = { AnchorMin = "0.02 0.8", AnchorMax = "0.3 1" }
+                Text = { Text = Lang("Deposit"), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"},
+                RectTransform = { AnchorMin = "0.02 0.8", AnchorMax = "0.35 1" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui existing", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.02 0.6", AnchorMax = "0.3 0.8" },
-                Text = { Text = Lang("DepositExisting"), FontSize = 16, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui existing", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.02 0.6", AnchorMax = "0.35 0.8" },
+                Text = { Text = Lang("DepositExisting"), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.02 0.35", AnchorMax = "0.3 0.55" },
-                Text = { Text = Lang("DepositAll"), FontSize = 16, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.02 0.35", AnchorMax = "0.35 0.55" },
+                Text = { Text = Lang("DepositAll"), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             if (UserHasPerm(player, permLootAll))
             {
                 elements.Add(new CuiButton
                 {
-                    Button = { Command = "quicksortgui.lootall", Color = "0 0.7 0 0.5" },
-                    RectTransform = { AnchorMin = "0.02 0.05", AnchorMax = "0.3 0.3" },
-                    Text = { Text = Lang("LootAll"), FontSize = 16, Align = TextAnchor.MiddleCenter }
+                    Button = { Command = "quicksortgui.lootall", Color = "0.41 0.50 0.25 0.8" },
+                    RectTransform = { AnchorMin = "0.02 0.05", AnchorMax = "0.35 0.3" },
+                    Text = { Text = Lang("LootAll"), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
                 }, panel);
             }
             //center
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui weapon", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.818", AnchorMax = "0.63 0.949" },
-                Text = { Text = Lang("DepositWeapons", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui weapon", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.818", AnchorMax = "0.65 0.949" },
+                Text = { Text = Lang("DepositWeapons", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui ammunition", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.664", AnchorMax = "0.63 0.796" },
-                Text = { Text = Lang("DepositAmmo", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui ammunition", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.664", AnchorMax = "0.65 0.796" },
+                Text = { Text = Lang("DepositAmmo", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui medical", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.511", AnchorMax = "0.63 0.642" },
-                Text = { Text = Lang("DepositMedical", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui medical", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.511", AnchorMax = "0.65 0.642" },
+                Text = { Text = Lang("DepositMedical", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui attire", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.358", AnchorMax = "0.63 0.489" },
-                Text = { Text = Lang("DepositAttire", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui attire", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.358", AnchorMax = "0.65 0.489" },
+                Text = { Text = Lang("DepositAttire", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui resources", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.204", AnchorMax = "0.63 0.336" },
-                Text = { Text = Lang("DepositResources", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui resources", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.204", AnchorMax = "0.65 0.336" },
+                Text = { Text = Lang("DepositResources", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui component", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.051", AnchorMax = "0.63 0.182" },
-                Text = { Text = Lang("DepositComponents", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui component", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.051", AnchorMax = "0.65 0.182" },
+                Text = { Text = Lang("DepositComponents", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             //right
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui construction", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.818", AnchorMax = "0.95 0.949" },
-                Text = { Text = Lang("DepositConstruction", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui construction", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.818", AnchorMax = "0.98 0.949" },
+                Text = { Text = Lang("DepositConstruction", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui items", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.664", AnchorMax = "0.95 0.796" },
-                Text = { Text = Lang("DepositItems", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui items", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.664", AnchorMax = "0.98 0.796" },
+                Text = { Text = Lang("DepositItems", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui tool", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.511", AnchorMax = "0.95 0.642" },
-                Text = { Text = Lang("DepositTools", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui tool", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.511", AnchorMax = "0.98 0.642" },
+                Text = { Text = Lang("DepositTools", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui food", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.358", AnchorMax = "0.95 0.489" },
-                Text = { Text = Lang("DepositFood", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui food", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.358", AnchorMax = "0.98 0.489" },
+                Text = { Text = Lang("DepositFood", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui traps", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.204", AnchorMax = "0.95 0.336" },
-                Text = { Text = Lang("DepositTraps", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui traps", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.204", AnchorMax = "0.98 0.336" },
+                Text = { Text = Lang("DepositTraps", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui misc", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.051", AnchorMax = "0.95 0.182" },
-                Text = { Text = Lang("DepositMisc", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui misc", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.051", AnchorMax = "0.98 0.182" },
+                Text = { Text = Lang("DepositMisc", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8"}
             }, panel);
 
             CuiHelper.AddUi(player, elements);
@@ -1059,29 +1079,34 @@ namespace Oxide.Plugins
 
             string panel = elements.Add(new CuiPanel
             {
-                Image = { Color = "0.0 0.0 0.0 0.0" },
-                RectTransform = { AnchorMin = "0.663 0.769", AnchorMax = "0.928 0.96" }
+                Image = { Color = "0 0 0 0" },
+                RectTransform = {
+                    AnchorMin = "0.5 0.0",
+                    AnchorMax = "0.5 0.0",
+                    OffsetMin = "-56 340",
+                    OffsetMax = "179 359"
+                }
             }, "Hud.Menu", guiInfo[player.userID]);
 
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui existing", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "-0.88 -1.545", AnchorMax = "-0.63 -1.435" },
-                Text = { Text = Lang("DepositExisting", player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui existing", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "0.44 1" },
+                Text = { Text = Lang("DepositExisting", player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "-0.61 -1.545", AnchorMax = "-0.36 -1.435" },
-                Text = { Text = Lang("DepositAll", player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.46 0", AnchorMax = "0.60 1" },
+                Text = { Text = Lang("DepositAll", player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             if (UserHasPerm(player, permLootAll))
             {
                 elements.Add(new CuiButton
                 {
-                    Button = { Command = "quicksortgui.lootall", Color = "0 0.7 0 0.5" },
-                    RectTransform = { AnchorMin = "-0.34 -1.545", AnchorMax = "-0.13 -1.435" },
-                    Text = { Text = Lang("LootAll", player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter }
+                    Button = { Command = "quicksortgui.lootall", Color = "0.41 0.50 0.25 0.8" },
+                    RectTransform = { AnchorMin = "0.62 0", AnchorMax = "1 1" },
+                    Text = { Text = Lang("LootAll", player.UserIDString), FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
                 }, panel);
             }
 
@@ -1099,108 +1124,113 @@ namespace Oxide.Plugins
             string panel = elements.Add(new CuiPanel
             {
                 Image = { Color = "0.5 0.5 0.5 0.33" },
-                RectTransform = { AnchorMin = "0.638 0.844", AnchorMax = "0.909 1" }
+                RectTransform = {                    
+                    AnchorMin = "0.5 1.0",
+                    AnchorMax = "0.5 1.0",
+                    OffsetMin = "192 -137",
+                    OffsetMax = "573 0"
+                }
             }, "Hud.Menu", guiInfo[player.userID]);
             //left
             elements.Add(new CuiLabel
             {
-                Text = { Text = Lang("Deposit", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter },
-                RectTransform = { AnchorMin = "0.02 0.8", AnchorMax = "0.3 1" }
+                Text = { Text = Lang("Deposit", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" },
+                RectTransform = { AnchorMin = "0.02 0.8", AnchorMax = "0.35 1" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui existing", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.02 0.6", AnchorMax = "0.3 0.8" },
-                Text = { Text = Lang("DepositExisting", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui existing", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.02 0.6", AnchorMax = "0.35 0.8" },
+                Text = { Text = Lang("DepositExisting", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.02 0.35", AnchorMax = "0.3 0.55" },
-                Text = { Text = Lang("DepositAll", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.02 0.35", AnchorMax = "0.35 0.55" },
+                Text = { Text = Lang("DepositAll", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             if (UserHasPerm(player, permLootAll))
             {
                 elements.Add(new CuiButton
                 {
-                    Button = { Command = "quicksortgui.lootall", Color = "0 0.7 0 0.5" },
-                    RectTransform = { AnchorMin = "0.02 0.05", AnchorMax = "0.3 0.3" },
-                    Text = { Text = Lang("LootAll", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter }
+                    Button = { Command = "quicksortgui.lootall", Color = "0.41 0.50 0.25 0.8" },
+                    RectTransform = { AnchorMin = "0.02 0.05", AnchorMax = "0.35 0.3" },
+                    Text = { Text = Lang("LootAll", player.UserIDString), FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
                 }, panel);
             }
             //center
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui weapon", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.818", AnchorMax = "0.63 0.949" },
-                Text = { Text = Lang("DepositWeapons", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui weapon", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.818", AnchorMax = "0.65 0.949" },
+                Text = { Text = Lang("DepositWeapons", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui ammunition", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.664", AnchorMax = "0.63 0.796" },
-                Text = { Text = Lang("DepositAmmo", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui ammunition", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.664", AnchorMax = "0.65 0.796" },
+                Text = { Text = Lang("DepositAmmo", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui medical", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.511", AnchorMax = "0.63 0.642" },
-                Text = { Text = Lang("DepositMedical", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui medical", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.511", AnchorMax = "0.65 0.642" },
+                Text = { Text = Lang("DepositMedical", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui attire", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.358", AnchorMax = "0.63 0.489" },
-                Text = { Text = Lang("DepositAttire", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui attire", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.358", AnchorMax = "0.65 0.489" },
+                Text = { Text = Lang("DepositAttire", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui resources", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.204", AnchorMax = "0.63 0.336" },
-                Text = { Text = Lang("DepositResources", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui resources", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.204", AnchorMax = "0.65 0.336" },
+                Text = { Text = Lang("DepositResources", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui component", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.35 0.051", AnchorMax = "0.63 0.182" },
-                Text = { Text = Lang("DepositComponents", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui component", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.37 0.051", AnchorMax = "0.65 0.182" },
+                Text = { Text = Lang("DepositComponents", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             //right
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui construction", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.818", AnchorMax = "0.95 0.949" },
-                Text = { Text = Lang("DepositConstruction", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui construction", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.818", AnchorMax = "0.98 0.949" },
+                Text = { Text = Lang("DepositConstruction", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui items", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.664", AnchorMax = "0.95 0.796" },
-                Text = { Text = Lang("DepositItems", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui items", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.664", AnchorMax = "0.98 0.796" },
+                Text = { Text = Lang("DepositItems", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui tool", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.511", AnchorMax = "0.95 0.642" },
-                Text = { Text = Lang("DepositTools", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui tool", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.511", AnchorMax = "0.98 0.642" },
+                Text = { Text = Lang("DepositTools", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui food", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.358", AnchorMax = "0.95 0.489" },
-                Text = { Text = Lang("DepositFood", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui food", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.358", AnchorMax = "0.98 0.489" },
+                Text = { Text = Lang("DepositFood", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui traps", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.204", AnchorMax = "0.95 0.336" },
-                Text = { Text = Lang("DepositTraps", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui traps", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.204", AnchorMax = "0.98 0.336" },
+                Text = { Text = Lang("DepositTraps", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
             elements.Add(new CuiButton
             {
-                Button = { Command = "quicksortgui misc", Color = "1 0.5 0 0.5" },
-                RectTransform = { AnchorMin = "0.67 0.051", AnchorMax = "0.95 0.182" },
-                Text = { Text = Lang("DepositMisc", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter }
+                Button = { Command = "quicksortgui misc", Color = "0.75 0.43 0.18 0.8" },
+                RectTransform = { AnchorMin = "0.67 0.051", AnchorMax = "0.98 0.182" },
+                Text = { Text = Lang("DepositMisc", player.UserIDString), FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0.77 0.92 0.67 0.8" }
             }, panel);
 
             CuiHelper.AddUi(player, elements);
