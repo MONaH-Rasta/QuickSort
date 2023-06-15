@@ -17,7 +17,7 @@ Do need OnPlayerLootEnd and possibly OnLootEntityEnd (for edge cases).
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "MON@H", "1.8.1")]
+    [Info("Quick Sort", "MON@H", "1.8.2")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     public class QuickSort : RustPlugin
     {
@@ -427,18 +427,24 @@ namespace Oxide.Plugins
                 return;
             }
 
-            PlayerData playerData = _storedData.PlayerData[player.userID];
-
-            if (playerData == null)
-            {
-                playerData = _defaultPlayerData;
-                _storedData.PlayerData[player.userID] = playerData;
-            }
-
             if (args == null || args.Length == 0)
             {
                 PlayerSendMessage(player, Lang(LangKeys.Error.Syntax, player.UserIDString, _configData.GlobalSettings.Commands[0]));
                 return;
+            }
+
+            PlayerData playerData = _storedData.PlayerData[player.userID];
+
+            if (playerData == null)
+            {
+                playerData = new PlayerData()
+                {
+                    Enabled = _configData.GlobalSettings.DefaultEnabled,
+                    AutoLootAll = _configData.GlobalSettings.AutoLootAll,
+                    UiStyle = _configData.GlobalSettings.DefaultUiStyle,
+                    Containers = _configData.GlobalSettings.Containers,
+                };
+                _storedData.PlayerData[player.userID] = playerData;
             }
 
             switch (args[0].ToLower())
@@ -988,7 +994,7 @@ namespace Oxide.Plugins
 
         public void CreateCache()
         {
-            _defaultPlayerData = new PlayerData
+            _defaultPlayerData = new PlayerData()
             {
                 Enabled = _configData.GlobalSettings.DefaultEnabled,
                 AutoLootAll = _configData.GlobalSettings.AutoLootAll,
