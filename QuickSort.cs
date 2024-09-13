@@ -17,7 +17,7 @@ Do need OnPlayerLootEnd and possibly OnLootEntityEnd (for edge cases).
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "MON@H", "1.8.2")]
+    [Info("Quick Sort", "MON@H", "1.8.3")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     public class QuickSort : RustPlugin
     {
@@ -188,7 +188,7 @@ namespace Oxide.Plugins
         {
             _storedData = Interface.Oxide.DataFileSystem.ReadObject<StoredData>(Name);
 
-            List<ulong> toRemove = Pool.GetList<ulong>();
+            List<ulong> toRemove = Pool.Get<List<ulong>>();
             foreach (KeyValuePair<ulong, PlayerData> playerData in _storedData.PlayerData)
             {
                 if (!playerData.Value.AutoLootAll.Equals(_defaultPlayerData.AutoLootAll))
@@ -228,7 +228,7 @@ namespace Oxide.Plugins
                 SaveData();
             }
 
-            Pool.FreeList(ref toRemove);
+            Pool.FreeUnmanaged(ref toRemove);
         }
 
         public void SaveData() => Interface.Oxide.DataFileSystem.WriteObject(Name, _storedData);
@@ -644,8 +644,6 @@ namespace Oxide.Plugins
             if (fullyLooted > 0 && fullyLooted == containers.Count)
             {
                 player.EndLooting();
-                // HACK: Send empty respawn information to fully close the player inventory (toggle backpack closed)
-                player.ClientRPCPlayer(null, player, "OnRespawnInformation");
                 return true;
             }
 
@@ -666,7 +664,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            List<Item> itemsSelected = Pool.GetList<Item>();
+            List<Item> itemsSelected = Pool.Get<List<Item>>();
 
             foreach (ItemContainer itemContainer in containers)
             {
@@ -708,7 +706,7 @@ namespace Oxide.Plugins
                 }
             }
 
-            Pool.FreeList(ref itemsSelected);
+            Pool.FreeUnmanaged(ref itemsSelected);
         }
 
         public void SortItems(BasePlayer player, string[] args)
@@ -729,7 +727,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            List<Item> itemsSelected = Pool.GetList<Item>();
+            List<Item> itemsSelected = Pool.Get<List<Item>>();
 
             if (args == null)
             {
@@ -800,7 +798,7 @@ namespace Oxide.Plugins
 
             MoveItems(itemsSelected, container);
 
-            Pool.FreeList(ref itemsSelected);
+            Pool.FreeUnmanaged(ref itemsSelected);
         }
 
         public void AddExistingItems(List<Item> list, ItemContainer primary, ItemContainer secondary)
