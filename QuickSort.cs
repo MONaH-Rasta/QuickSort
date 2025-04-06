@@ -11,7 +11,7 @@ using Pool = Facepunch.Pool;
 /*
 7. Use offsets instead of anchors for all the child UI elements (my preference).
 8. Is it necessary to use OnEntityDeath / OnEntityKill / OnPlayerSleep?
-Nowadays I think the loot hooks are sufficiently comprehensive.
+Nowadays, I think the loot hooks are sufficiently comprehensive.
 Do need OnPlayerLootEnd and possibly OnLootEntityEnd (for edge cases).
 */
 
@@ -28,15 +28,15 @@ namespace Oxide.Plugins
         private const string PermissionLootAll = "quicksort.lootall";
         private const string PermissionUse = "quicksort.use";
 
-        private readonly Hash<int, string> _cacheUiJson = new Hash<int, string>();
-        private readonly Hash<string, int> _cacheLanguageIDs = new Hash<string, int>();
-        private readonly HashSet<uint> _cacheContainersExcluded = new HashSet<uint>();
+        private readonly Hash<int, string> _cacheUiJson = new();
+        private readonly Hash<string, int> _cacheLanguageIDs = new();
+        private readonly HashSet<uint> _cacheContainersExcluded = new();
         // Keep track of UI viewers to reduce unnecessary calls to destroy the UI.
-        private readonly HashSet<ulong> _uiViewers = new HashSet<ulong>();
+        private readonly HashSet<ulong> _uiViewers = new();
 
-        private object[] _noteInv = new object[2];
+        private readonly object[] _noteInv = new object[2];
         // When players do not have data, use this shared object to avoid unnecessary heap allocations.
-        private PlayerData _defaultPlayerData;
+        private PlayersData _defaultPlayerData;
 
         #endregion Variables
 
@@ -73,39 +73,39 @@ namespace Oxide.Plugins
         private class ConfigData
         {
             [JsonProperty(PropertyName = "Global settings")]
-            public GlobalConfiguration GlobalSettings = new GlobalConfiguration();
+            public readonly GlobalConfiguration GlobalSettings = new();
 
             [JsonProperty(PropertyName = "Custom UI Settings")]
-            public UiConfiguration CustomUISettings = new UiConfiguration();
+            public readonly UiConfiguration CustomUISettings = new();
 
             public class GlobalConfiguration
             {
                 [JsonProperty(PropertyName = "Default enabled")]
-                public bool DefaultEnabled = true;
+                public readonly bool DefaultEnabled = true;
 
                 [JsonProperty(PropertyName = "Default UI style (center, lite, right, custom)")]
-                public string DefaultUiStyle = "right";
+                public readonly string DefaultUiStyle = "right";
 
                 [JsonProperty(PropertyName = "Loot all delay in seconds (0 to disable)")]
-                public int LootAllDelay = 0;
+                public int LootAllDelay;
 
                 [JsonProperty(PropertyName = "Enable loot all on the sleepers")]
-                public bool LootSleepers = false;
+                public readonly bool LootSleepers = false;
 
                 [JsonProperty(PropertyName = "Auto loot all enabled by default")]
-                public bool AutoLootAll = false;
+                public readonly bool AutoLootAll = false;
 
                 [JsonProperty(PropertyName = "Default enabled container types")]
-                public PlayerContainers Containers = new PlayerContainers();
+                public readonly PlayerContainers Containers = new();
 
                 [JsonProperty(PropertyName = "Chat steamID icon")]
-                public ulong SteamIDIcon = 0;
+                public readonly ulong SteamIDIcon = 0;
 
                 [JsonProperty(PropertyName = "Chat command")]
                 public string[] Commands = new[] { "qs", "quicksort" };
 
                 [JsonProperty(PropertyName = "Excluded containers", ObjectCreationHandling = ObjectCreationHandling.Replace)]
-                public List<string> ContainersExcluded = new List<string>()
+                public readonly List<string> ContainersExcluded = new()
                 {
                     "assets/prefabs/deployable/single shot trap/guntrap.deployed.prefab",
                     "assets/prefabs/npc/autoturret/autoturret_deployed.prefab",
@@ -117,24 +117,24 @@ namespace Oxide.Plugins
 
             public class UiConfiguration
             {
-                public string AnchorsMin = "0.5 1.0";
-                public string AnchorsMax = "0.5 1.0";
-                public string OffsetsMin = "192 -137";
-                public string OffsetsMax = "573 0";
-                public string Color = "0.5 0.5 0.5 0.33";
-                public string ButtonsColor = "0.75 0.43 0.18 0.8";
-                public string LootAllColor = "0.41 0.50 0.25 0.8";
-                public string TextColor = "0.77 0.92 0.67 0.8";
-                public int TextSize = 16;
-                public int CategoriesTextSize = 14;
+                public readonly string AnchorsMin = "0.5 1.0";
+                public readonly string AnchorsMax = "0.5 1.0";
+                public readonly string OffsetsMin = "192 -137";
+                public readonly string OffsetsMax = "573 0";
+                public readonly string Color = "0.5 0.5 0.5 0.33";
+                public readonly string ButtonsColor = "0.75 0.43 0.18 0.8";
+                public readonly string LootAllColor = "0.41 0.50 0.25 0.8";
+                public readonly string TextColor = "0.77 0.92 0.67 0.8";
+                public readonly int TextSize = 16;
+                public readonly int CategoriesTextSize = 14;
             }
         }
 
         public class PlayerContainers
         {
-            public bool Belt = false;
+            public bool Belt;
             public bool Main = true;
-            public bool Wear = false;
+            public bool Wear;
         }
 
         protected override void LoadConfig()
@@ -173,10 +173,10 @@ namespace Oxide.Plugins
 
         private class StoredData
         {
-            public readonly Hash<ulong, PlayerData> PlayerData = new Hash<ulong, PlayerData>();
+            public readonly Hash<ulong, PlayersData> PlayerData = new();
         }
 
-        public class PlayerData
+        public class PlayersData
         {
             public bool Enabled;
             public bool AutoLootAll;
@@ -189,7 +189,7 @@ namespace Oxide.Plugins
             _storedData = Interface.Oxide.DataFileSystem.ReadObject<StoredData>(Name);
 
             List<ulong> toRemove = Pool.Get<List<ulong>>();
-            foreach (KeyValuePair<ulong, PlayerData> playerData in _storedData.PlayerData)
+            foreach (KeyValuePair<ulong, PlayersData> playerData in _storedData.PlayerData)
             {
                 if (!playerData.Value.AutoLootAll.Equals(_defaultPlayerData.AutoLootAll))
                 {
@@ -233,7 +233,7 @@ namespace Oxide.Plugins
 
         public void SaveData() => Interface.Oxide.DataFileSystem.WriteObject(Name, _storedData);
 
-        public PlayerData GetPlayerData(ulong userID)
+        public PlayersData GetPlayerData(ulong userID)
         {
             return _storedData.PlayerData[userID] ?? _defaultPlayerData;
         }
@@ -389,9 +389,7 @@ namespace Oxide.Plugins
 
         private void OnPlayerLootEnd(PlayerLoot inventory)
         {
-            BasePlayer player = inventory.baseEntity;
-
-            if (player.IsValid())
+            if (inventory.baseEntity is { } player && player.IsValid())
             {
                 UiDestroy(player);
             }
@@ -433,18 +431,15 @@ namespace Oxide.Plugins
                 return;
             }
 
-            PlayerData playerData = _storedData.PlayerData[player.userID];
-
-            if (playerData == null)
+            if (_storedData.PlayerData[player.userID] is not { } playerData)
             {
-                playerData = new PlayerData()
+                _storedData.PlayerData[player.userID] = playerData = new PlayersData()
                 {
                     Enabled = _configData.GlobalSettings.DefaultEnabled,
                     AutoLootAll = _configData.GlobalSettings.AutoLootAll,
                     UiStyle = _configData.GlobalSettings.DefaultUiStyle,
                     Containers = _configData.GlobalSettings.Containers,
                 };
-                _storedData.PlayerData[player.userID] = playerData;
             }
 
             switch (args[0].ToLower())
@@ -500,8 +495,7 @@ namespace Oxide.Plugins
                             {
                                 case "main":
                                     {
-                                        bool flag = false;
-                                        if (args.Length > 2 && bool.TryParse(args[2], out flag))
+                                        if (args.Length > 2 && bool.TryParse(args[2], out bool flag))
                                         {
                                             playerData.Containers.Main = flag;
                                         }
@@ -516,8 +510,7 @@ namespace Oxide.Plugins
                                     }
                                 case "wear":
                                     {
-                                        bool flag = false;
-                                        if (args.Length > 2 && bool.TryParse(args[2], out flag))
+                                        if (args.Length > 2 && bool.TryParse(args[2], out bool flag))
                                         {
                                             playerData.Containers.Wear = flag;
                                         }
@@ -532,8 +525,7 @@ namespace Oxide.Plugins
                                     }
                                 case "belt":
                                     {
-                                        bool flag = false;
-                                        if (args.Length > 2 && bool.TryParse(args[2], out flag))
+                                        if (args.Length > 2 && bool.TryParse(args[2], out bool flag))
                                         {
                                             playerData.Containers.Belt = flag;
                                         }
@@ -565,15 +557,17 @@ namespace Oxide.Plugins
                 {
                     SortItems(player, arg.Args);
                 }
-                catch { }
+                catch
+                {
+                    // ignored
+                }
             }
         }
 
         [ConsoleCommand("quicksortgui.lootall")]
         private void LootAllCommand(ConsoleSystem.Arg arg)
         {
-            BasePlayer player = arg.Player();
-            if (player.IsValid() && permission.UserHasPermission(player.UserIDString, PermissionLootAll))
+            if (arg.Player() is { } player && player.IsValid() && permission.UserHasPermission(player.UserIDString, PermissionLootAll))
             {
                 timer.Once(_configData.GlobalSettings.LootAllDelay, () => LootAll(player));
             }
@@ -582,13 +576,11 @@ namespace Oxide.Plugins
         [ConsoleCommand("quicksortgui.lootdelay")]
         private void LootDelayCommand(ConsoleSystem.Arg arg)
         {
-            BasePlayer player = arg.Player();
-            if (player.IsValid() && player.IsAdmin)
+            if (arg.Player() is { IsAdmin: true } player && player.IsValid())
             {
-                int x;
-                if (int.TryParse(arg.Args[0], out x))
+                if (int.TryParse(arg.Args[0], out int delay))
                 {
-                    _configData.GlobalSettings.LootAllDelay = x;
+                    _configData.GlobalSettings.LootAllDelay = delay;
                     SaveConfig();
                 }
             }
@@ -614,16 +606,8 @@ namespace Oxide.Plugins
 
         public bool AutoLootAll(BasePlayer player)
         {
-            PlayerData playerData = GetPlayerData(player.userID);
-
-            if (!playerData.AutoLootAll)
-            {
-                return false;
-            }
-
-            List<ItemContainer> containers = GetLootedInventory(player);
-
-            if (containers == null)
+            if (GetPlayerData(player.userID) is not { AutoLootAll: true }
+            || GetLootedInventory(player) is not { } containers)
             {
                 return false;
             }
@@ -652,14 +636,8 @@ namespace Oxide.Plugins
 
         public void LootAll(BasePlayer player)
         {
-            List<ItemContainer> containers = GetLootedInventory(player);
-
-            if (containers == null)
-            {
-                return;
-            }
-
-            if (!_configData.GlobalSettings.LootSleepers && IsOwnerSleeper(containers[0]))
+            if (GetLootedInventory(player) is not { } containers
+            || !_configData.GlobalSettings.LootSleepers && IsOwnerSleeper(containers[0]))
             {
                 return;
             }
@@ -739,7 +717,7 @@ namespace Oxide.Plugins
                     }
                 }
 
-                if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type != null && type.Wear)
+                if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type is { Wear: true })
                 {
                     for (int i = 0; i < playerWear.itemList.Count; i++)
                     {
@@ -747,7 +725,7 @@ namespace Oxide.Plugins
                     }
                 }
 
-                if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type != null && type.Belt)
+                if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type is { Belt: true })
                 {
                     for (int i = 0; i < playerBelt.itemList.Count; i++)
                     {
@@ -764,12 +742,12 @@ namespace Oxide.Plugins
                         AddExistingItems(itemsSelected, playerMain, container);
                     }
 
-                    if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type != null && type.Wear)
+                    if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type is { Wear: true })
                     {
                         AddExistingItems(itemsSelected, playerWear, container);
                     }
 
-                    if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type != null && type.Belt)
+                    if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type is { Belt: true })
                     {
                         AddExistingItems(itemsSelected, playerBelt, container);
                     }
@@ -782,12 +760,12 @@ namespace Oxide.Plugins
                         AddItemsOfType(itemsSelected, playerMain, category);
                     }
 
-                    if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type != null && type.Wear)
+                    if (playerWear != null && _configData.GlobalSettings.Containers.Wear && type is { Wear: true })
                     {
                         AddItemsOfType(itemsSelected, playerWear, category);
                     }
 
-                    if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type != null && type.Belt)
+                    if (playerBelt != null && _configData.GlobalSettings.Containers.Belt && type is { Belt: true })
                     {
                         AddItemsOfType(itemsSelected, playerBelt, category);
                     }
@@ -834,17 +812,13 @@ namespace Oxide.Plugins
 
         public List<ItemContainer> GetLootedInventory(BasePlayer player)
         {
-            PlayerLoot playerLoot = player.inventory.loot;
-
-            if (playerLoot != null && playerLoot.IsLooting())
+            if (player.inventory.loot is { } playerLoot
+            && playerLoot.IsLooting()
+            && playerLoot.containers is { } containers)
             {
-                List<ItemContainer> containers = playerLoot.containers;
-
                 foreach (ItemContainer container in containers)
                 {
-                    BaseEntity entity = container.entityOwner;
-
-                    if (entity.IsValid() && IsContainerExcluded(player, entity))
+                    if (container is { entityOwner: { } entity } && entity.IsValid() && IsContainerExcluded(player, entity))
                     {
                         return null;
                     }
@@ -881,62 +855,21 @@ namespace Oxide.Plugins
 
         public bool IsContainerExcluded(BasePlayer player, BaseEntity entity)
         {
-            if (entity is ShopFront || entity is BigWheelBettingTerminal || entity is NPCVendingMachine)
+            switch (entity)
             {
-                return true;
-            }
-
-            if (entity is VendingMachine)
-            {
-                VendingMachine vendingMachine = (VendingMachine)entity;
-
-                if (!vendingMachine.PlayerBehind(player))
-                {
+                case ShopFront:
+                case BigWheelBettingTerminal:
+                case NPCVendingMachine:
+                case VendingMachine vendingMachine when vendingMachine.PlayerBehind(player):
+                case DropBox dropBox when dropBox.PlayerBehind(player):
+                case IItemContainerEntity container when container.inventory.IsLocked():
                     return true;
-                }
+                default:
+                    return _cacheContainersExcluded.Contains(entity.prefabID) || Interface.CallHook("QuickSortExcluded", player, entity) != null;
             }
-
-            if (entity is DropBox)
-            {
-                DropBox dropBox = (DropBox)entity;
-
-                if (!dropBox.PlayerBehind(player))
-                {
-                    return true;
-                }
-            }
-
-            if (entity is IItemContainerEntity)
-            {
-                IItemContainerEntity container = (IItemContainerEntity)entity;
-
-                if (container.inventory.IsLocked())
-                {
-                    return true;
-                }
-            }
-
-            if (_cacheContainersExcluded.Contains(entity.prefabID))
-            {
-                return true;
-            }
-
-            if (Interface.CallHook("QuickSortExcluded", player, entity) != null)
-            {
-                return true;
-            }
-
-            return false;
         }
 
-        public static bool IsOwnerSleeper(ItemContainer container)
-        {
-            BasePlayer playerOwner = container.playerOwner;
-            if ((object)playerOwner == null || !IsPlayerContainer(container, playerOwner))
-                return false;
-
-            return playerOwner.IsSleeping();
-        }
+        public static bool IsOwnerSleeper(ItemContainer container) => container is { playerOwner: { } playerOwner } && IsPlayerContainer(container, playerOwner) && playerOwner.IsSleeping();
 
         public static bool IsPlayerContainer(ItemContainer container, BasePlayer player)
         {
@@ -992,7 +925,7 @@ namespace Oxide.Plugins
 
         public void CreateCache()
         {
-            _defaultPlayerData = new PlayerData()
+            _defaultPlayerData = new PlayersData()
             {
                 Enabled = _configData.GlobalSettings.DefaultEnabled,
                 AutoLootAll = _configData.GlobalSettings.AutoLootAll,
@@ -1017,7 +950,7 @@ namespace Oxide.Plugins
             player.SendConsoleCommand("chat.add", 2, _configData.GlobalSettings.SteamIDIcon, string.IsNullOrEmpty(Lang(LangKeys.Format.Prefix, player.UserIDString)) ? message : Lang(LangKeys.Format.Prefix, player.UserIDString) + message);
         }
 
-        public int GetUiId(BasePlayer player, PlayerData playerData)
+        public int GetUiId(BasePlayer player, PlayersData playerData)
         {
             int id = 0;
             switch (playerData.UiStyle)
@@ -1059,9 +992,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            PlayerData playerData = GetPlayerData(player.userID);
-
-            if (!playerData.Enabled)
+            if (GetPlayerData(player.userID) is not { Enabled: true } playerData)
             {
                 return;
             }
@@ -1102,7 +1033,9 @@ namespace Oxide.Plugins
         public void UiDestroy(BasePlayer player)
         {
             if (!_uiViewers.Remove(player.userID))
+            {
                 return;
+            }
 
             CuiHelper.DestroyUi(player, GUIPanelName);
         }
@@ -1111,7 +1044,7 @@ namespace Oxide.Plugins
 
         public string UiGetJsonCustom(BasePlayer player)
         {
-            CuiElementContainer elements = new CuiElementContainer();
+            CuiElementContainer elements = new();
             ConfigData.UiConfiguration customUISettings = _configData.CustomUISettings;
 
             string panel = elements.Add(new CuiPanel
@@ -1258,7 +1191,7 @@ namespace Oxide.Plugins
 
         public string UiGetJsonCenter(BasePlayer player)
         {
-            CuiElementContainer elements = new CuiElementContainer();
+            CuiElementContainer elements = new();
 
             string panel = elements.Add(new CuiPanel
             {
@@ -1404,7 +1337,7 @@ namespace Oxide.Plugins
 
         public string UiGetJsonLite(BasePlayer player)
         {
-            CuiElementContainer elements = new CuiElementContainer();
+            CuiElementContainer elements = new();
 
             string panel = elements.Add(new CuiPanel
             {
@@ -1450,7 +1383,7 @@ namespace Oxide.Plugins
 
         public string UiGetJsonRight(BasePlayer player)
         {
-            CuiElementContainer elements = new CuiElementContainer();
+            CuiElementContainer elements = new();
 
             string panel = elements.Add(new CuiPanel
             {
