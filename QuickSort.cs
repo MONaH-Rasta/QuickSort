@@ -395,7 +395,7 @@ namespace Oxide.Plugins
             }
         }
 
-        private void OnEntityDeath(BasePlayer player, HitInfo info)
+        private void OnEntityDeath(BasePlayer player, HitInfo _)
         {
             if (player.IsValid() && !player.IsNpc && player.userID.IsSteamId())
             {
@@ -658,15 +658,7 @@ namespace Oxide.Plugins
             {
                 int amount = item.amount;
 
-                if (item.MoveToContainer(player.inventory.containerMain))
-                {
-                    _noteInv[0] = item.info.itemid;
-                    _noteInv[1] = amount;
-                    player.Command("note.inv", _noteInv);
-                    continue;
-                }
-
-                if (item.MoveToContainer(player.inventory.containerBelt))
+                if (item.MoveToContainer(player.inventory.containerMain) || item.MoveToContainer(player.inventory.containerBelt))
                 {
                     _noteInv[0] = item.info.itemid;
                     _noteInv[1] = amount;
@@ -779,7 +771,7 @@ namespace Oxide.Plugins
             Pool.FreeUnmanaged(ref itemsSelected);
         }
 
-        public void AddExistingItems(List<Item> list, ItemContainer primary, ItemContainer secondary)
+        public static void AddExistingItems(List<Item> list, ItemContainer primary, ItemContainer secondary)
         {
             if (primary == null || secondary == null)
             {
@@ -799,7 +791,7 @@ namespace Oxide.Plugins
             }
         }
 
-        public void AddItemsOfType(List<Item> list, ItemContainer container, ItemCategory category)
+        public static void AddItemsOfType(List<Item> list, ItemContainer container, ItemCategory category)
         {
             foreach (Item item in container.itemList)
             {
@@ -830,7 +822,7 @@ namespace Oxide.Plugins
             return null;
         }
 
-        public void MoveItems(IEnumerable<Item> items, ItemContainer to)
+        public static void MoveItems(IEnumerable<Item> items, ItemContainer to)
         {
             foreach (Item item in items)
             {
@@ -838,7 +830,7 @@ namespace Oxide.Plugins
             }
         }
 
-        public ItemCategory StringToItemCategory(string categoryName)
+        public static ItemCategory StringToItemCategory(string categoryName)
         {
             string[] categoryNames = Enum.GetNames(typeof(ItemCategory));
 
@@ -860,8 +852,8 @@ namespace Oxide.Plugins
                 case ShopFront:
                 case BigWheelBettingTerminal:
                 case NPCVendingMachine:
-                case VendingMachine vendingMachine when vendingMachine.PlayerBehind(player):
-                case DropBox dropBox when dropBox.PlayerBehind(player):
+                case VendingMachine vendingMachine when !vendingMachine.PlayerBehind(player):
+                case DropBox dropBox when !dropBox.PlayerBehind(player):
                 case IItemContainerEntity container when container.inventory.IsLocked():
                     return true;
                 default:
