@@ -17,7 +17,7 @@ Do need OnPlayerLootEnd and possibly OnLootEntityEnd (for edge cases).
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "MON@H", "1.8.4")]
+    [Info("Quick Sort", "MON@H", "1.8.5")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     public class QuickSort : RustPlugin
     {
