@@ -855,6 +855,7 @@ namespace Oxide.Plugins
                 case VendingMachine vendingMachine when !vendingMachine.PlayerBehind(player):
                 case DropBox dropBox when !dropBox.PlayerBehind(player):
                 case IItemContainerEntity container when container.inventory.IsLocked():
+                case BasePlayer basePlayer when basePlayer.IsRestrained:
                     return true;
                 default:
                     return _cacheContainersExcluded.Contains(entity.prefabID) || Interface.CallHook("QuickSortExcluded", player, entity) != null;
