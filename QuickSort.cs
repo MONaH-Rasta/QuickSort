@@ -17,7 +17,7 @@ Do need OnPlayerLootEnd and possibly OnLootEntityEnd (for edge cases).
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "MON@H", "1.8.6")]
+    [Info("Quick Sort", "MON@H", "1.8.7")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     public class QuickSort : RustPlugin
     {
@@ -346,9 +346,9 @@ namespace Oxide.Plugins
                 [LangKeys.Format.Construction] = "Конструкции",
                 [LangKeys.Format.Deployables] = "Развертываемые",
                 [LangKeys.Format.Deposit] = "Положить",
-                [LangKeys.Format.Disabled] = "<color=#B22222>Отключена</color>",
+                [LangKeys.Format.Disabled] = "<color=#B22222>отключено</color>",
                 [LangKeys.Format.Electrical] = "Электричество",
-                [LangKeys.Format.Enabled] = "<color=#228B22>Включена</color>",
+                [LangKeys.Format.Enabled] = "<color=#228B22>включено</color>",
                 [LangKeys.Format.Existing] = "Существующие",
                 [LangKeys.Format.Food] = "Еда",
                 [LangKeys.Format.LootAll] = "Забрать всё",
@@ -371,6 +371,41 @@ namespace Oxide.Plugins
                 "<color=#FFFF00>/{0} <s | style> <center | lite | right | custom></color> - изменить стиль GUI быстрой сортировки.\n" +
                 "<color=#FFFF00>/{0} <c | conatiner> <main | wear | belt></color> - добавить/удалить тип контейнера для сортировки.",
             }, this, "ru");
+            lang.RegisterMessages(new Dictionary<string, string>
+            {
+                [LangKeys.Error.NoPermission] = "У вас немає дозволу на використання цієї команди!",
+                [LangKeys.Format.All] = "Усе",
+                [LangKeys.Format.Ammo] = "Боєприпаси",
+                [LangKeys.Format.Attire] = "Одяг",
+                [LangKeys.Format.Components] = "Компоненти",
+                [LangKeys.Format.Construction] = "Будівництво",
+                [LangKeys.Format.Deployables] = "Розгортувані",
+                [LangKeys.Format.Deposit] = "Покласти",
+                [LangKeys.Format.Disabled] = "<color=#B22222>вимкнено</color>",
+                [LangKeys.Format.Electrical] = "Електрика",
+                [LangKeys.Format.Enabled] = "<color=#228B22>увімкнено</color>",
+                [LangKeys.Format.Existing] = "Наявні",
+                [LangKeys.Format.Food] = "Їжа",
+                [LangKeys.Format.LootAll] = "Забрати все",
+                [LangKeys.Format.Medical] = "Медикаменти",
+                [LangKeys.Format.Misc] = "Різне",
+                [LangKeys.Format.Prefix] = "<color=#00FF00>[Швидке сортування]</color>: ",
+                [LangKeys.Format.Resources] = "Ресурси",
+                [LangKeys.Format.Tools] = "Інструменти",
+                [LangKeys.Format.Traps] = "Пастки",
+                [LangKeys.Format.Weapons] = "Зброя",
+                [LangKeys.Info.AutoLootAll] = "Автоматичне забирання тепер {0}",
+                [LangKeys.Info.ContainerType] = "Швидке сортування для типу контейнера {0} тепер {1}",
+                [LangKeys.Info.QuickSort] = "GUI швидкого сортування тепер {0}",
+                [LangKeys.Info.Style] = "Стиль GUI швидкого сортування тепер {0}",
+
+                [LangKeys.Error.Syntax] = "Список команд:\n" +
+                "<color=#FFFF00>/{0} on</color> - Увімкнути GUI\n" +
+                "<color=#FFFF00>/{0} off</color> - Вимкнути GUI\n" +
+                "<color=#FFFF00>/{0} auto</color> - Увімкнути/Вимкнути автоматичне забирання\n" +
+                "<color=#FFFF00>/{0} <s | style> <center | lite | right | custom></color> - змінити стиль GUI\n" +
+                "<color=#FFFF00>/{0} <c | conatiner> <main | wear | belt></color> - додати/видалити тип контейнера для сортування.",
+            }, this, "uk");
         }
 
         #endregion Localization
@@ -615,7 +650,7 @@ namespace Oxide.Plugins
             int fullyLooted = 0;
             foreach (ItemContainer itemContainer in containers)
             {
-                if (itemContainer.HasFlag(ItemContainer.Flag.NoItemInput))
+                if (IsNoItemInputContainer(itemContainer))
                 {
                     LootAll(player);
                     if (itemContainer.IsEmpty())
@@ -692,7 +727,7 @@ namespace Oxide.Plugins
             ItemContainer playerWear = player.inventory?.containerWear;
             ItemContainer playerBelt = player.inventory?.containerBelt;
 
-            if (container == null || playerMain == null || container.HasFlag(ItemContainer.Flag.NoItemInput))
+            if (container == null || playerMain == null || IsNoItemInputContainer(container))
             {
                 return;
             }
@@ -861,6 +896,8 @@ namespace Oxide.Plugins
                     return _cacheContainersExcluded.Contains(entity.prefabID) || Interface.CallHook("QuickSortExcluded", player, entity) != null;
             }
         }
+
+        public bool IsNoItemInputContainer(ItemContainer container) => container.HasFlag(ItemContainer.Flag.NoItemInput) || container.entityOwner is LockedByEntCrate;
 
         public static bool IsOwnerSleeper(ItemContainer container) => container is { playerOwner: { } playerOwner } && IsPlayerContainer(container, playerOwner) && playerOwner.IsSleeping();
 
