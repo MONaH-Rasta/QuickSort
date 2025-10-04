@@ -17,7 +17,7 @@ Do need OnPlayerLootEnd and possibly OnLootEntityEnd (for edge cases).
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "MON@H", "1.8.7")]
+    [Info("Quick Sort", "MON@H", "1.8.8")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     public class QuickSort : RustPlugin
     {
@@ -28,8 +28,8 @@ namespace Oxide.Plugins
         private const string PermissionLootAll = "quicksort.lootall";
         private const string PermissionUse = "quicksort.use";
 
-        private readonly Hash<int, string> _cacheUiJson = new();
-        private readonly Hash<string, int> _cacheLanguageIDs = new();
+        private readonly Dictionary<int, string> _cacheUiJson = new();
+        private readonly Dictionary<string, int> _cacheLanguageIDs = new();
         private readonly HashSet<uint> _cacheContainersExcluded = new();
         // Keep track of UI viewers to reduce unnecessary calls to destroy the UI.
         private readonly HashSet<ulong> _uiViewers = new();
@@ -650,7 +650,7 @@ namespace Oxide.Plugins
             int fullyLooted = 0;
             foreach (ItemContainer itemContainer in containers)
             {
-                if (IsNoItemInputContainer(itemContainer))
+                if (IsLootContainer(itemContainer))
                 {
                     LootAll(player);
                     if (itemContainer.IsEmpty())
@@ -727,7 +727,7 @@ namespace Oxide.Plugins
             ItemContainer playerWear = player.inventory?.containerWear;
             ItemContainer playerBelt = player.inventory?.containerBelt;
 
-            if (container == null || playerMain == null || IsNoItemInputContainer(container))
+            if (container == null || playerMain == null || IsLootContainer(container))
             {
                 return;
             }
@@ -897,7 +897,7 @@ namespace Oxide.Plugins
             }
         }
 
-        public bool IsNoItemInputContainer(ItemContainer container) => container.HasFlag(ItemContainer.Flag.NoItemInput) || container.entityOwner is LockedByEntCrate;
+        public bool IsLootContainer(ItemContainer container) => container.HasFlag(ItemContainer.Flag.NoItemInput) || container.entityOwner is LootContainer;
 
         public static bool IsOwnerSleeper(ItemContainer container) => container is { playerOwner: { } playerOwner } && IsPlayerContainer(container, playerOwner) && playerOwner.IsSleeping();
 
@@ -1005,8 +1005,8 @@ namespace Oxide.Plugins
                 id += 1;
             }
             //Max. value = 7117
-            id *= 10000;
-            id += _cacheLanguageIDs[lang.GetLanguage(player.UserIDString)];
+            _cacheLanguageIDs.TryGetValue(lang.GetLanguage(player.UserIDString), out int langId);
+            id = id * 10000 + langId;
 
             return id;
         }
@@ -1035,9 +1035,7 @@ namespace Oxide.Plugins
             }
 
             int uiId = GetUiId(player, playerData);
-            string cachedJson = _cacheUiJson[uiId];
-
-            if (string.IsNullOrWhiteSpace(cachedJson))
+            if (!_cacheUiJson.TryGetValue(uiId, out string cachedJson))
             {
                 switch (playerData.UiStyle)
                 {
