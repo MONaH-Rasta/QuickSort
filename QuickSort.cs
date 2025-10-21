@@ -17,7 +17,7 @@ Do need OnPlayerLootEnd and possibly OnLootEntityEnd (for edge cases).
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "MON@H", "1.8.8")]
+    [Info("Quick Sort", "MON@H", "1.8.9")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     public class QuickSort : RustPlugin
     {
@@ -890,7 +890,7 @@ namespace Oxide.Plugins
                 case VendingMachine vendingMachine when !vendingMachine.PlayerBehind(player):
                 case DropBox dropBox when !dropBox.PlayerBehind(player):
                 case IItemContainerEntity container when container.inventory.IsLocked():
-                case BasePlayer basePlayer when basePlayer.IsRestrained:
+                case BasePlayer basePlayer when basePlayer.IsRestrainedOrSurrendering:
                     return true;
                 default:
                     return _cacheContainersExcluded.Contains(entity.prefabID) || Interface.CallHook("QuickSortExcluded", player, entity) != null;
