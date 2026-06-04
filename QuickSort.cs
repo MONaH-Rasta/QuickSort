@@ -17,7 +17,7 @@ Do need OnPlayerLootEnd and possibly OnLootEntityEnd (for edge cases).
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "MON@H", "1.8.9")]
+    [Info("Quick Sort", "MON@H", "1.8.10")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     public class QuickSort : RustPlugin
     {
@@ -590,7 +590,8 @@ namespace Oxide.Plugins
             {
                 try
                 {
-                    SortItems(player, arg.Args);
+                    string[] args = (arg.Args == null || arg.Args.Length == 0) ? Array.Empty<string>() : Array.ConvertAll(arg.Args, str => str.ToString());
+                    SortItems(player, args);
                 }
                 catch
                 {
@@ -613,7 +614,7 @@ namespace Oxide.Plugins
         {
             if (arg.Player() is { IsAdmin: true } player && player.IsValid())
             {
-                if (int.TryParse(arg.Args[0], out int delay))
+                if (int.TryParse(arg.GetString(0), out int delay))
                 {
                     _configData.GlobalSettings.LootAllDelay = delay;
                     SaveConfig();
