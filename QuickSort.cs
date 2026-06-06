@@ -17,7 +17,7 @@ Do need OnPlayerLootEnd and possibly OnLootEntityEnd (for edge cases).
 
 namespace Oxide.Plugins
 {
-    [Info("Quick Sort", "MON@H", "1.8.10")]
+    [Info("Quick Sort", "MON@H", "1.8.11")]
     [Description("Adds a GUI that allows players to quickly sort items into containers")]
     public class QuickSort : RustPlugin
     {
@@ -585,13 +585,11 @@ namespace Oxide.Plugins
         [ConsoleCommand("quicksortgui")]
         private void SortCommand(ConsoleSystem.Arg arg)
         {
-            BasePlayer player = arg.Player();
-            if (player.IsValid() && permission.UserHasPermission(player.UserIDString, PermissionUse))
+            if (arg.Player() is { } player && player.IsValid() && permission.UserHasPermission(player.UserIDString, PermissionUse))
             {
                 try
                 {
-                    string[] args = (arg.Args == null || arg.Args.Length == 0) ? Array.Empty<string>() : Array.ConvertAll(arg.Args, str => str.ToString());
-                    SortItems(player, args);
+                    SortItems(player, arg.GetString(0, null));
                 }
                 catch
                 {
@@ -715,7 +713,7 @@ namespace Oxide.Plugins
             Pool.FreeUnmanaged(ref itemsSelected);
         }
 
-        public void SortItems(BasePlayer player, string[] args)
+        public void SortItems(BasePlayer player, string strCategory)
         {
             if (!player.IsValid())
             {
@@ -735,7 +733,7 @@ namespace Oxide.Plugins
 
             List<Item> itemsSelected = Pool.Get<List<Item>>();
 
-            if (args == null)
+            if (strCategory == null)
             {
                 if (_configData.GlobalSettings.Containers.Main && (type == null || type.Main))
                 {
@@ -763,7 +761,7 @@ namespace Oxide.Plugins
             }
             else
             {
-                if (args[0].Equals("existing"))
+                if (strCategory.Equals("existing"))
                 {
                     if (_configData.GlobalSettings.Containers.Main && (type == null || type.Main))
                     {
@@ -782,7 +780,7 @@ namespace Oxide.Plugins
                 }
                 else
                 {
-                    ItemCategory category = StringToItemCategory(args[0]);
+                    ItemCategory category = StringToItemCategory(strCategory);
                     if (_configData.GlobalSettings.Containers.Main && (type == null || type.Main))
                     {
                         AddItemsOfType(itemsSelected, playerMain, category);
